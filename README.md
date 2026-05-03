@@ -46,6 +46,11 @@ chmod +x scripts/quick_test.sh
 ./scripts/quick_test.sh
 ```
 
+Supabase migration & demo
+- A Supabase SQL schema and example RLS policies are provided in `supabase/schema.sql` and `supabase/policies.sql`.
+- A minimal static demo that uses Supabase JS to sign in, CRUD ingredients and upload receipts is at `web/supabase-demo.html`.
+- Setup instructions are in `docs/supabase-setup.md`.
+
 Next steps I can implement
 - Alembic migrations and an initial migration file.
 - Additional CRUD endpoints and WebSocket realtime scaffolding.
