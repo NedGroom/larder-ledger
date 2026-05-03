@@ -1,0 +1,7 @@
+venv
+.venv
+dev.db
+uvicorn.log
+uvicorn.pid
+__pycache__/
+*.pyc
