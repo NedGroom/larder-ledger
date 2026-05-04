@@ -1,13 +1,16 @@
 import { useState, useEffect, createContext, useContext } from 'react'
 import { supabase } from './lib/supabase.js'
+import { loadTheme } from './lib/themes.js'
 import SignIn from './components/SignIn.jsx'
 import Layout from './components/Layout.jsx'
+import HousePicker from './components/HousePicker.jsx'
 import Pantry from './pages/Pantry.jsx'
 import Meals from './pages/Meals.jsx'
 import Calendar from './pages/Calendar.jsx'
 import Stores from './pages/Stores.jsx'
 import Shopping from './pages/Shopping.jsx'
 import Receipts from './pages/Receipts.jsx'
+import Settings from './pages/Settings.jsx'
 
 // ── App-wide context ─────────────────────────────────────────────────────────
 // Shares the current house and user session across all pages.
@@ -15,18 +18,21 @@ export const AppContext = createContext(null)
 export function useApp() { return useContext(AppContext) }
 
 const TABS = [
-  { id: 'pantry',   label: '🥕 Pantry' },
+  { id: 'pantry',   label: '🧺 Larder' },
   { id: 'meals',    label: '🍲 Meals' },
   { id: 'calendar', label: '📅 Calendar' },
-  { id: 'stores',   label: '🏪 Stores' },
-  { id: 'shopping', label: '🛒 Shopping' },
-  { id: 'receipts', label: '📷 Receipts' },
+  { id: 'shopping', label: '🛒 Shopping List' },
+  { id: 'stores',   label: '🏪 Shops' },
+  { id: 'receipts', label: '📷 Import Receipt' },
 ]
 
 export default function App() {
-  const [session, setSession] = useState(undefined) // undefined = loading
+  const [session, setSession] = useState(undefined)
   const [house, setHouse] = useState(null)
+  const [userRow, setUserRow] = useState(null)
   const [tab, setTab] = useState('pantry')
+
+  useEffect(() => { loadTheme() }, [])
 
   // ── Auth ────────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -35,64 +41,49 @@ export default function App() {
     return () => subscription.unsubscribe()
   }, [])
 
-  // ── House auto-select ───────────────────────────────────────────────────────
-  // On login, find the user's house via house_users, or create one.
+  // ── User row + house lookup (no auto-create) ────────────────────────────────
   useEffect(() => {
-    if (!session) { setHouse(null); return }
-    async function initHouse() {
-      const userId = session.user.id  // UUID from Supabase auth
+    if (!session) { setHouse(null); setUserRow(null); return }
+    async function initUser() {
+      const userId = session.user.id
 
-      // Upsert into public.users matching on auth_uid
-      const { data: userRow } = await supabase
+      // Upsert into public.users
+      const { data: uRow } = await supabase
         .from('users')
-        .upsert({ auth_uid: userId, email: session.user.email }, { onConflict: 'auth_uid' })
+        .upsert(
+          { auth_uid: userId, email: session.user.email, name: session.user.user_metadata?.full_name },
+          { onConflict: 'auth_uid' }
+        )
         .select('id')
         .single()
 
-      if (!userRow) return
+      if (!uRow) return
+      setUserRow(uRow)
 
-      const intId = userRow.id  // our integer user id
-
-      // Look up houses this user is a member of
+      // Find existing house membership
       const { data: membership } = await supabase
         .from('house_users')
         .select('house_id, houses(*)')
-        .eq('user_id', intId)
+        .eq('user_id', uRow.id)
         .limit(1)
-        .single()
+        .maybeSingle()
 
       if (membership?.houses) {
         setHouse(membership.houses)
-        return
       }
-
-      // No house yet — create one and add the user as owner
-      const email = session.user.email
-      const defaultName = email.split('@')[0] + "'s house"
-      const { data: created } = await supabase
-        .from('houses')
-        .insert({ name: defaultName })
-        .select()
-        .single()
-
-      if (created) {
-        await supabase.from('house_users').insert({
-          house_id: created.id,
-          user_id: intId,
-          role: 'owner',
-        })
-        setHouse(created)
-      }
+      // If no membership, house stays null → HousePicker is shown
     }
-    initHouse()
+    initUser()
   }, [session])
 
   // ── Loading / signed-out states ─────────────────────────────────────────────
   if (session === undefined) return <div className="loading">Loading…</div>
   if (!session) return <SignIn />
-  if (!house) return <div className="loading">Setting up your house…</div>
+  if (!userRow) return <div className="loading">Loading…</div>
+  // No house yet — show picker
+  if (!house) return <HousePicker userRow={userRow} onJoined={h => setHouse(h)} />
 
-  const ctx = { session, house, tab, setTab }
+  const ctx = { session, house, setHouse, userRow, tab, setTab }
 
   return (
     <AppContext.Provider value={ctx}>
@@ -103,7 +94,7 @@ export default function App() {
         {tab === 'stores'   && <Stores />}
         {tab === 'shopping' && <Shopping />}
         {tab === 'receipts' && <Receipts />}
-      </Layout>
+        {tab === 'settings' && <Settings />}      </Layout>
     </AppContext.Provider>
   )
 }

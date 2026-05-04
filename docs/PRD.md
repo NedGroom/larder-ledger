@@ -15,6 +15,7 @@ Key features (MVP)
 1. Ingredient management
    - Create/update/delete ingredients with name, canonical unit, unit aliases, optional quantity, and boolean `has_any`.
    - Ingredients belong to a house; default unit conversions are not required initially but multiple units accepted on entry.
+   - `updated_at` timestamp is set whenever `has_any` is toggled to `true`, recording when the item was last confirmed in stock.
 
 2. Meal registry
    - Create meals containing name, dish type (enumeration), prep time, servings, tags, chef, list of ingredients (references to pantry items), and optional price‑per‑portion.
@@ -35,6 +36,25 @@ Key features (MVP)
 
 6. Collaboration & filters
    - Multi‑user house with realtime updates; chef tagging and meal filters (dish type, chef).
+
+7. Larder staleness scanning (planned)
+   - Each ingredient has an `updated_at` timestamp that is refreshed whenever `has_any` is toggled to `true`.
+   - A "Forgotten items" view (within the Larder page or a dedicated scan panel) lists ingredients that:
+     a. Have `has_any = true` (i.e. currently marked as in stock), AND
+     b. Have not been touched (updated_at) for longer than a configurable threshold (default: 7 days for fresh produce, 30 days for dry goods, 90 days for frozen/tinned — category configurable per ingredient).
+   - Items are grouped into severity bands: ⚠️ Getting old (>threshold/2), 🔴 Possibly forgotten (>threshold), 💀 Very overdue (>2× threshold).
+   - User can act on each item: "Still in" (resets timestamp), "Used up" (sets has_any=false), or "Ignore" (snoozes for N days).
+   - Future: push notification or in-app badge count for overdue items.
+
+User stories (staleness)
+- US-S1: View forgotten items
+  - Given ingredients with old updated_at, the scan view lists them in severity order.
+- US-S2: Reset freshness
+  - Tapping "Still in" on an item sets updated_at = now() and removes it from the stale list.
+- US-S3: Mark as used
+  - Tapping "Used up" sets has_any = false; item disappears from scan and appears on shopping list.
+- US-S4: Per-ingredient thresholds
+  - An optional `stale_after_days` field on ingredients lets users override the default threshold per item.
 
 Non‑functional requirements
 - Mobile‑first responsive UI (PWA). Simple, readable UX with bulletized lists.

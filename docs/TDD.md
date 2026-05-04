@@ -14,9 +14,9 @@ Chosen stack (MVP)
 
 Database schema (core tables)
 - users: id (PK), email, name, hashed_password, created_at
-- houses: id, name, created_at
+- houses: id, name, is_public boolean, join_password text, created_at
 - house_users: house_id, user_id, role
-- ingredients: id, house_id, name, canonical_unit, unit_aliases JSON, has_any boolean, quantity_value numeric, quantity_unit varchar, created_by, created_at
+- ingredients: id, house_id, name, name_normalized, canonical_unit, canonical_quantity, has_any boolean, stale_after_days int (nullable — overrides default threshold), created_by, created_at, **updated_at** (refreshed on every has_any toggle)
 - meals: id, house_id, name, dish_type varchar, prep_time_min int, servings int, price_per_portion numeric, chef_user_id, created_at
 - meal_ingredients: id, meal_id, ingredient_id, required_quantity numeric, required_unit varchar
 - stores: id, house_id, name, created_by
@@ -85,6 +85,84 @@ Future extensions (brief)
 - Automated store scraping or aggregator integrations.
 - Event streaming (Kafka) for audit/history and analytics.
 - Advanced substitution engine and recipe scaling.
+
+Larder staleness — technical design
+---------------------------------------
+Goal: surface ingredients that have been marked "in stock" but not confirmed for a long time,
+so users can verify what's actually still in the house vs forgotten/going off.
+
+### DB changes needed
+```sql
+ALTER TABLE ingredients ADD COLUMN stale_after_days INTEGER DEFAULT NULL;
+-- updated_at already exists and is touched by trigger on every UPDATE.
+-- Toggling has_any = true counts as "confirmed in stock" so no extra column needed.
+```
+
+### Staleness query (Supabase / Postgres)
+Default thresholds (used when stale_after_days IS NULL):
+  - No category system yet → use a single configurable default, e.g. 14 days.
+
+```sql
+-- Returns stale in-stock ingredients for a given house
+SELECT
+  id, name, has_any, updated_at,
+  COALESCE(stale_after_days, 14) AS threshold_days,
+  now() - updated_at AS age,
+  CASE
+    WHEN now() - updated_at > COALESCE(stale_after_days, 14) * INTERVAL '2 days' THEN 'overdue'
+    WHEN now() - updated_at > COALESCE(stale_after_days, 14) * INTERVAL '1 day'  THEN 'stale'
+    WHEN now() - updated_at > COALESCE(stale_after_days, 14) * INTERVAL '0.5 days' THEN 'aging'
+    ELSE 'ok'
+  END AS staleness
+FROM ingredients
+WHERE house_id = $1
+  AND has_any = true
+  AND now() - updated_at > COALESCE(stale_after_days, 14) * INTERVAL '0.5 days'
+ORDER BY age DESC;
+```
+
+### Supabase RPC (planned)
+```sql
+CREATE OR REPLACE FUNCTION stale_ingredients(p_house_id BIGINT)
+RETURNS TABLE (
+  id BIGINT, name TEXT, updated_at TIMESTAMPTZ,
+  threshold_days INT, staleness TEXT
+)
+LANGUAGE sql STABLE SECURITY DEFINER AS $$
+  SELECT id, name, updated_at,
+    COALESCE(stale_after_days, 14) AS threshold_days,
+    CASE
+      WHEN now() - updated_at > COALESCE(stale_after_days, 14) * INTERVAL '2 days' THEN 'overdue'
+      WHEN now() - updated_at > COALESCE(stale_after_days, 14) * INTERVAL '1 day'  THEN 'stale'
+      ELSE 'aging'
+    END AS staleness
+  FROM ingredients
+  WHERE house_id = p_house_id
+    AND has_any = true
+    AND now() - updated_at > COALESCE(stale_after_days, 14) * 0.5 * INTERVAL '1 day'
+  ORDER BY updated_at ASC;
+$$;
+```
+
+### Frontend component plan: `<StalenessScanner />`
+- Location: A "🔍 Scan larder" button or badge on the Larder page (or a dedicated tab later).
+- On open: calls `stale_ingredients(house_id)` RPC, groups results into severity bands.
+- Each row shows: ingredient name, days since confirmed, severity badge (⚠️ / 🔴 / 💀).
+- Row actions:
+  - **Still in** → `UPDATE ingredients SET updated_at = now() WHERE id = $id`
+  - **Used up**  → `UPDATE ingredients SET has_any = false WHERE id = $id`
+  - **Snooze**   → client-side: hides the row for N days using localStorage key `snooze_{id}`
+- Badge count: show number of stale items as a red badge on the Larder tab button.
+- Per-ingredient threshold: expose `stale_after_days` as an optional field in the ingredient
+  edit form (e.g. "Alert after X days", leave blank for default).
+
+### Migration file to create
+`supabase/migrations/20260504000004_ingredient_staleness.sql`
+```sql
+ALTER TABLE ingredients ADD COLUMN IF NOT EXISTS stale_after_days INTEGER DEFAULT NULL;
+```
+(updated_at column and trigger already exist from the original schema)
+
 
 Appendix: next concrete tasks I can implement for you
 - Generate FastAPI starter skeleton + alembic migrations for the schema above.

@@ -171,7 +171,7 @@ export default function Stores() {
               return <p className="msg ok">→ £{(+priceVal / +pkgSize).toFixed(4)} per {pkgSizeUnit || 'unit'}</p>
             }
             return null
-          })()
+          })()}
           <button className="btn" type="submit" disabled={priceSaving}>
             {priceSaving ? <span className="spinner" /> : 'Save price'}
           </button>

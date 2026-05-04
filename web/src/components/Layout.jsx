@@ -2,7 +2,7 @@ import { useApp } from '../App.jsx'
 import { supabase } from '../lib/supabase.js'
 
 export default function Layout({ tabs, activeTab, onTabChange, children }) {
-  const { session, house } = useApp()
+  const { house } = useApp()
 
   async function signOut() {
     await supabase.auth.signOut()
@@ -14,7 +14,13 @@ export default function Layout({ tabs, activeTab, onTabChange, children }) {
         <span style={{ fontSize: '1.3rem' }}>🥫</span>
         <h1>LarderLedger</h1>
         <div className="header-right">
-          <span>{house?.name}</span>
+          <span className="house-name">{house?.name}</span>
+          <button
+            className="icon-btn"
+            title="Settings"
+            onClick={() => onTabChange('settings')}
+            aria-label="Settings"
+          >⚙️</button>
           <button className="signout-btn" onClick={signOut}>Sign out</button>
         </div>
       </header>

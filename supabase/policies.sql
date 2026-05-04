@@ -49,7 +49,7 @@ BEGIN
 END $$;
 
 -- POLICIES: houses
-CREATE POLICY "houses: members can read"         ON houses FOR SELECT USING (is_house_member(id));
+CREATE POLICY "houses: read public or member"    ON houses FOR SELECT USING (is_public = true OR is_house_member(id));
 CREATE POLICY "houses: authenticated can create" ON houses FOR INSERT WITH CHECK (auth.uid() IS NOT NULL);
 CREATE POLICY "houses: members can update"       ON houses FOR UPDATE USING (is_house_member(id));
 
