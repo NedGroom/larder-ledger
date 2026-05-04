@@ -11,6 +11,9 @@ ALTER TABLE ingredients
   ADD COLUMN IF NOT EXISTS canonical_quantity NUMERIC;
 
 ALTER TABLE ingredient_prices
-  DROP COLUMN IF EXISTS price_unit,
+  DROP COLUMN IF EXISTS price_unit;
+
+ALTER TABLE ingredient_prices
   RENAME COLUMN price_per_base_unit TO price_per_canonical;
+
 
