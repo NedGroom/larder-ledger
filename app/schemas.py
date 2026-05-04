@@ -58,6 +58,7 @@ class IngredientUpdate(BaseModel):
 class ShoppingListCreate(BaseModel):
     ingredient_id: int
     auto_generated: Optional[bool] = True
+    meal_id: Optional[int] = None
 
 
 class ShoppingListOut(BaseModel):
@@ -66,9 +67,14 @@ class ShoppingListOut(BaseModel):
     ingredient_id: int
     auto_generated: bool
     completed: bool
+    meal_id: Optional[int] = None
 
     class Config:
         orm_mode = True
+
+
+class MealPlan(BaseModel):
+    planned_date: Optional[str] = None  # YYYY-MM-DD or null to clear
 
 
 class StoreCreate(BaseModel):

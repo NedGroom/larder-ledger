@@ -199,7 +199,8 @@ def add_shopping_list_item(house_id: int, payload: schemas.ShoppingListCreate, s
     ingredient = session.query(models.Ingredient).get(payload.ingredient_id)
     if not ingredient or ingredient.house_id != house_id:
         raise HTTPException(status_code=400, detail="Ingredient does not belong to house")
-    item = models.ShoppingListItem(house_id=house_id, ingredient_id=payload.ingredient_id, auto_generated=payload.auto_generated)
+    item = models.ShoppingListItem(house_id=house_id, ingredient_id=payload.ingredient_id,
+                                    auto_generated=payload.auto_generated, meal_id=payload.meal_id)
     session.add(item)
     session.commit()
     session.refresh(item)
@@ -212,6 +213,27 @@ def add_shopping_list_item(house_id: int, payload: schemas.ShoppingListCreate, s
         pass
 
     return item
+
+
+    return item
+
+
+@app.get("/houses/{house_id}/meals")
+def list_meals(house_id: int, session: Session = Depends(get_db)):
+    meals = session.query(models.Meal).filter(models.Meal.house_id == house_id).order_by(models.Meal.name).all()
+    return [{"id": m.id, "name": m.name, "dish_type": m.dish_type, "prep_time_min": m.prep_time_min,
+             "servings": m.servings, "planned_date": m.planned_date} for m in meals]
+
+
+@app.patch("/meals/{meal_id}/plan")
+def plan_meal(meal_id: int, payload: schemas.MealPlan, session: Session = Depends(get_db)):
+    meal = session.query(models.Meal).get(meal_id)
+    if not meal:
+        raise HTTPException(status_code=404, detail="Meal not found")
+    meal.planned_date = payload.planned_date
+    session.commit()
+    session.refresh(meal)
+    return {"id": meal.id, "name": meal.name, "planned_date": meal.planned_date}
 
 
 @app.patch("/shopping-list/{item_id}", response_model=schemas.ShoppingListOut)

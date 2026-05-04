@@ -48,6 +48,7 @@ CREATE TABLE meals (
   servings INTEGER,
   price_per_portion NUMERIC,
   chef_user_id TEXT REFERENCES users(id),
+  planned_date DATE,
   created_at TIMESTAMPTZ DEFAULT now(),
   updated_at TIMESTAMPTZ DEFAULT now()
 );
@@ -96,6 +97,7 @@ CREATE TABLE shopping_list_items (
   added_by TEXT REFERENCES users(id),
   auto_generated BOOLEAN DEFAULT TRUE,
   completed BOOLEAN DEFAULT FALSE,
+  meal_id BIGINT REFERENCES meals(id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ DEFAULT now(),
   updated_at TIMESTAMPTZ DEFAULT now()
 );

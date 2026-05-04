@@ -213,12 +213,109 @@ function MealModal({ houseId, onClose, onSaved }) {
   )
 }
 
+// ── Plan meal modal ───────────────────────────────────────────────────────────
+function PlanModal({ meal, houseId, onClose, onSaved }) {
+  const [date, setDate] = useState(meal.planned_date ?? '')
+  const [ingredients, setIngredients] = useState([])
+  const [checked, setChecked] = useState({}) // { [ingredient_id]: bool }
+  const [saving, setSaving] = useState(false)
+  const [err, setErr] = useState('')
+
+  useEffect(() => {
+    // Load this meal's ingredients
+    supabase.from('meal_ingredients')
+      .select('ingredient_id, required_quantity, required_unit, ingredients(name, has_any)')
+      .eq('meal_id', meal.id)
+      .then(({ data }) => setIngredients(data ?? []))
+  }, [meal.id])
+
+  async function save(e) {
+    e.preventDefault()
+    setSaving(true)
+
+    // 1. Set planned_date on the meal
+    const { error: planErr } = await supabase.from('meals')
+      .update({ planned_date: date || null })
+      .eq('id', meal.id)
+    if (planErr) { setErr(planErr.message); setSaving(false); return }
+
+    // 2. Add checked ingredients to shopping list tagged with meal_id
+    const toAdd = ingredients.filter(i => checked[i.ingredient_id])
+    if (toAdd.length) {
+      const rows = toAdd.map(i => ({
+        house_id: houseId,
+        ingredient_id: i.ingredient_id,
+        auto_generated: false,
+        meal_id: meal.id,
+        completed: false,
+      }))
+      const { error: shopErr } = await supabase.from('shopping_list_items').insert(rows)
+      if (shopErr) { setErr(shopErr.message); setSaving(false); return }
+    }
+
+    setSaving(false)
+    onSaved()
+  }
+
+  return (
+    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
+      <div className="modal">
+        <div className="modal-header">
+          <h2>Plan: {meal.name}</h2>
+          <button className="modal-close" onClick={onClose}>✕</button>
+        </div>
+        <form onSubmit={save}>
+          <label>
+            Date
+            <input type="date" value={date} onChange={e => setDate(e.target.value)} />
+          </label>
+
+          {ingredients.length > 0 && (
+            <>
+              <h3 style={{ marginTop: '.8rem' }}>Add to shopping list</h3>
+              <p style={{ fontSize: '.8rem', color: '#888', margin: '-.2rem 0 .5rem' }}>
+                Tick ingredients you need to buy. They'll be tagged with this meal.
+              </p>
+              {ingredients.map(i => (
+                <div key={i.ingredient_id} className="ing-picker-row">
+                  <input
+                    type="checkbox"
+                    checked={!!checked[i.ingredient_id]}
+                    onChange={() => setChecked(prev => ({ ...prev, [i.ingredient_id]: !prev[i.ingredient_id] }))}
+                  />
+                  <span className="ing-name">{i.ingredients?.name}</span>
+                  {i.required_quantity && (
+                    <span className="meta">{i.required_quantity} {i.required_unit ?? ''}</span>
+                  )}
+                  {i.ingredients?.has_any
+                    ? <span className="pill green" style={{ fontSize: '.7rem' }}>in stock</span>
+                    : <span className="pill red" style={{ fontSize: '.7rem' }}>missing</span>
+                  }
+                </div>
+              ))}
+            </>
+          )}
+
+          {err && <p className="msg err">{err}</p>}
+          <div className="btn-row" style={{ marginTop: '.9rem' }}>
+            <button className="btn" type="submit" disabled={saving}>
+              {saving ? <span className="spinner" /> : 'Save plan'}
+            </button>
+            <button className="btn secondary" type="button" onClick={onClose}>Cancel</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
 // ── Main Meals page ───────────────────────────────────────────────────────────
 export default function Meals() {
   const { house } = useApp()
   const [meals, setMeals] = useState([])
   const [loading, setLoading] = useState(true)
   const [showModal, setShowModal] = useState(false)
+  const [planMeal, setPlanMeal] = useState(null)
   const [fractions, setFractions] = useState(null)
   const [loadingFrac, setLoadingFrac] = useState(false)
 
@@ -268,13 +365,15 @@ export default function Meals() {
             <span className="name">{meal.name}</span>
             {meal.dish_type && <span className="pill gray">{meal.dish_type}</span>}
             {meal.prep_time_min && <span className="meta">{meal.prep_time_min}m</span>}
-            {meal.servings && <span className="meta">{meal.servings} servings</span>}
+            {meal.servings && <span className="meta">{meal.servings} srv</span>}
+            {meal.planned_date && <span className="pill blue">📅 {meal.planned_date}</span>}
             {frac != null && (
               <span style={{ display: 'flex', alignItems: 'center', gap: '.4rem' }}>
                 <span className="fbar"><span className="fbar-fill" style={{ width: `${pct}%` }} /></span>
                 <span className="meta">{frac.ingredients_present}/{frac.total_ingredients}</span>
               </span>
             )}
+            <button className="btn small" onClick={() => setPlanMeal(meal)}>Plan</button>
           </div>
         )
       })}
@@ -292,6 +391,14 @@ export default function Meals() {
 
       {showModal && (
         <MealModal houseId={house.id} onClose={() => setShowModal(false)} onSaved={handleSaved} />
+      )}
+      {planMeal && (
+        <PlanModal
+          meal={planMeal}
+          houseId={house.id}
+          onClose={() => setPlanMeal(null)}
+          onSaved={() => { setPlanMeal(null); load() }}
+        />
       )}
     </>
   )

@@ -72,6 +72,7 @@ class Meal(Base):
     servings = Column(Integer, nullable=True)
     price_per_portion = Column(Numeric, nullable=True)
     chef_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    planned_date = Column(String(10), nullable=True)  # ISO date string YYYY-MM-DD
     created_at = Column(DateTime, default=datetime.utcnow)
     ingredients = relationship("MealIngredient", back_populates="meal", cascade="all, delete-orphan")
 
@@ -125,6 +126,7 @@ class ShoppingListItem(Base):
     added_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     auto_generated = Column(Boolean, default=True)
     completed = Column(Boolean, default=False)
+    meal_id = Column(Integer, ForeignKey("meals.id"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 

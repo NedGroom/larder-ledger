@@ -4,6 +4,7 @@ import SignIn from './components/SignIn.jsx'
 import Layout from './components/Layout.jsx'
 import Pantry from './pages/Pantry.jsx'
 import Meals from './pages/Meals.jsx'
+import Calendar from './pages/Calendar.jsx'
 import Stores from './pages/Stores.jsx'
 import Shopping from './pages/Shopping.jsx'
 import Receipts from './pages/Receipts.jsx'
@@ -16,6 +17,7 @@ export function useApp() { return useContext(AppContext) }
 const TABS = [
   { id: 'pantry',   label: '🥕 Pantry' },
   { id: 'meals',    label: '🍲 Meals' },
+  { id: 'calendar', label: '📅 Calendar' },
   { id: 'stores',   label: '🏪 Stores' },
   { id: 'shopping', label: '🛒 Shopping' },
   { id: 'receipts', label: '📷 Receipts' },
@@ -61,6 +63,7 @@ export default function App() {
       <Layout tabs={TABS} activeTab={tab} onTabChange={setTab}>
         {tab === 'pantry'   && <Pantry />}
         {tab === 'meals'    && <Meals />}
+        {tab === 'calendar' && <Calendar />}
         {tab === 'stores'   && <Stores />}
         {tab === 'shopping' && <Shopping />}
         {tab === 'receipts' && <Receipts />}
