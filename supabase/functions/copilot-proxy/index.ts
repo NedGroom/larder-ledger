@@ -56,15 +56,35 @@ serve(async (req) => {
       })
     }
 
+    const copilotHeaders = {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`,
+      'Editor-Version': 'vscode/1.99.0',
+      'Editor-Plugin-Version': 'copilot-chat/0.26.0',
+      'Copilot-Integration-Id': 'vscode-chat',
+      'User-Agent': 'GitHubCopilotChat/0.26.0',
+    }
+
+    // Resolve the best available model from the Copilot models endpoint
+    let model = body.model || 'gpt-4o'
+    try {
+      const modelsResp = await fetch('https://api.githubcopilot.com/models', {
+        headers: copilotHeaders,
+      })
+      if (modelsResp.ok) {
+        const modelsData = await modelsResp.json()
+        const models: string[] = (modelsData.data ?? modelsData.models ?? []).map((m: { id: string }) => m.id)
+        // Prefer gpt-4o, then gpt-4, then first available chat model
+        const preferred = ['gpt-4o', 'gpt-4o-mini', 'gpt-4', 'claude-3.5-sonnet', 'claude-3.7-sonnet']
+        const pick = preferred.find(p => models.includes(p)) ?? models[0]
+        if (pick) model = pick
+      }
+    } catch (_) { /* fall through with default */ }
+
     const upstream = await fetch(COPILOT_URL, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`,
-        'Editor-Version': 'larder-ledger/1.0',
-        'Copilot-Integration-Id': 'vscode-chat',
-      },
-      body: JSON.stringify(body),
+      headers: copilotHeaders,
+      body: JSON.stringify({ ...body, model }),
     })
 
     const data = await upstream.json()
