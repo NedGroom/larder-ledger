@@ -31,7 +31,7 @@ function CandidateTable({ candidates, ingredients, houseId, storeId, onSaved }) 
         ingredient_id: +row.matched_ingredient_id,
         store_id: storeId ? +storeId : null,
         price: +row.price,
-        price_unit: row.unit || null,
+        unit_size_unit: row.unit || null,
         currency: 'GBP',
         source: 'receipt-ai',
       })
