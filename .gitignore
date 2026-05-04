@@ -7,3 +7,4 @@ __pycache__/
 *.pyc
 .agents/
 skills-lock.json
+supabase/.temp/
