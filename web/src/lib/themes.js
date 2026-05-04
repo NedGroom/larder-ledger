@@ -7,7 +7,7 @@ export const THEMES = [
   { id: 'rose',     label: 'Rose',     swatch: '#9d174d', header: '#9d174d', nav: '#6d1035', accent: '#f472b6', btn: '#9d174d' },
 ]
 
-export const DEFAULT_THEME = 'forest'
+export const DEFAULT_THEME = 'lavender'
 
 export function applyTheme(themeId) {
   const t = THEMES.find(t => t.id === themeId) || THEMES[0]
@@ -25,7 +25,8 @@ export function applyDarkMode(dark) {
 }
 
 export function isDarkMode() {
-  return localStorage.getItem('darkMode') === '1'
+  const stored = localStorage.getItem('darkMode')
+  return stored === null ? true : stored === '1'
 }
 
 export function loadTheme() {

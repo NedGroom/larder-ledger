@@ -9,7 +9,10 @@
  * content:     string — either plain text, or a base64-encoded image
  * contentType: 'text' | 'image'   (for image, pass MIME type in imageMime)
  * imageMime:   e.g. 'image/jpeg'
- * apiKey:      user-supplied key, stored in localStorage (never sent to Supabase)
+ * apiKey:      user-supplied key, stored in localStorage (never sent to Supabase).
+ *              Not required for the 'copilot' provider — it uses a shared server-side
+ *              token via the copilot-proxy Supabase Edge Function.
+ * sessionToken: Supabase JWT — required only for the 'copilot' provider.
  */
 
 // ── Prompt shared across providers ───────────────────────────────────────────
@@ -83,6 +86,39 @@ async function extractAnthropic({ content, contentType, imageMime, apiKey }) {
   return parseJsonResponse(raw)
 }
 
+// ── GitHub Copilot ────────────────────────────────────────────────────────────
+// Calls our own Supabase Edge Function (copilot-proxy) which holds the token
+// server-side. No user-supplied API key needed — just a valid Supabase session.
+async function extractCopilot({ content, contentType, sessionToken }) {
+  if (contentType === 'image') throw new Error('GitHub Copilot provider does not support image input — please use text mode.')
+
+  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
+  const proxyUrl = `${supabaseUrl}/functions/v1/copilot-proxy`
+
+  const body = {
+    model: 'gpt-4o',
+    messages: [
+      { role: 'system', content: SYSTEM_PROMPT },
+      { role: 'user',   content },
+    ],
+    max_tokens: 1000,
+    temperature: 0,
+  }
+
+  const resp = await fetch(proxyUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${sessionToken}`,
+    },
+    body: JSON.stringify(body),
+  })
+  if (!resp.ok) throw new Error(`Copilot proxy error ${resp.status}: ${await resp.text()}`)
+  const data = await resp.json()
+  const raw = data.choices[0].message.content.trim()
+  return parseJsonResponse(raw)
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function parseJsonResponse(raw) {
   // Strip markdown code fences if present
@@ -98,14 +134,22 @@ function parseJsonResponse(raw) {
 
 // ── Public API ─────────────────────────────────────────────────────────────────
 export const PROVIDERS = {
+  copilot: {
+    name: 'GitHub Copilot',
+    supportsImage: false,
+    requiresApiKey: false,   // uses shared server-side token via proxy
+    extract: extractCopilot,
+  },
   openai: {
     name: 'OpenAI (GPT-4o)',
     supportsImage: true,
+    requiresApiKey: true,
     extract: extractOpenAI,
   },
   anthropic: {
     name: 'Anthropic (Claude 3.5 Sonnet)',
     supportsImage: true,
+    requiresApiKey: true,
     extract: extractAnthropic,
   },
 }
@@ -114,16 +158,17 @@ export const PROVIDERS = {
  * Run price extraction via the chosen provider.
  * @param {object} opts
  * @param {string} opts.provider   - key in PROVIDERS
- * @param {string} opts.apiKey
+ * @param {string} [opts.apiKey]   - user-supplied key (not needed for 'copilot')
+ * @param {string} [opts.sessionToken] - Supabase JWT (required for 'copilot')
  * @param {string} opts.content    - plain text OR base64 image
  * @param {'text'|'image'} opts.contentType
  * @param {string} [opts.imageMime] - e.g. 'image/jpeg', required when contentType=image
  * @returns {Promise<Array<{description:string, price:number, unit:string}>>}
  */
-export async function extractPrices({ provider, apiKey, content, contentType, imageMime }) {
+export async function extractPrices({ provider, apiKey, sessionToken, content, contentType, imageMime }) {
   const p = PROVIDERS[provider]
   if (!p) throw new Error(`Unknown AI provider: ${provider}`)
   if (contentType === 'image' && !p.supportsImage) throw new Error(`${p.name} does not support image input`)
-  return p.extract({ content, contentType, imageMime, apiKey })
+  return p.extract({ content, contentType, imageMime, apiKey, sessionToken })
 }
 

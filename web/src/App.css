@@ -83,7 +83,7 @@ nav button.active, nav button:hover { color: white; border-bottom-color: var(--c
 
 /* ── Typography ───────────────────────────────────────────────────── */
 h2 { font-size: 1rem; color: var(--color-btn); margin: 1.1rem 0 .5rem; font-weight: 700; }
-h3 { font-size: .95rem; color: #333; margin: .8rem 0 .4rem; }
+h3 { font-size: .95rem; color: var(--color-text); margin: .8rem 0 .4rem; }
 
 /* ── Form elements ────────────────────────────────────────────────── */
 label { display: block; font-size: .85rem; color: var(--color-text-muted); margin: .4rem 0; }
@@ -237,17 +237,49 @@ hr.divider { border: none; border-top: 1px solid #ebebeb; margin: 1rem 0; }
 .ing-picker-row input[type=number] { width: 70px; margin: 0; padding: .3rem .4rem; font-size: .82rem; }
 .ing-picker-row .ing-unit { font-size: .78rem; color: #888; width: 40px; }
 
-/* ── Receipt candidates table ─────────────────────────────────────── */
-.candidates { margin-top: .75rem; }
-.candidate-row {
-  display: grid; grid-template-columns: 1fr 80px 80px 1fr auto;
-  gap: .4rem; align-items: center;
-  padding: .4rem .5rem; border-bottom: 1px solid #f0f0f0;
-  font-size: .85rem;
+/* ── Receipt candidates (card layout) ─────────────────────────────── */
+.candidates { margin-top: .75rem; display: flex; flex-direction: column; gap: .6rem; }
+.candidates-summary { font-size: .78rem; color: var(--color-text-muted); margin-bottom: .2rem; }
+
+.candidate-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  padding: .65rem .75rem;
+  display: flex; flex-direction: column; gap: .5rem;
+  position: relative;
 }
-.candidate-row.header { font-weight: 600; color: #555; font-size: .78rem; background: #f9f9f9; border-radius: 5px 5px 0 0; }
-.candidate-row input[type=text], .candidate-row input[type=number] { margin: 0; font-size: .83rem; }
-.candidate-row select { margin: 0; font-size: .83rem; }
+.candidate-card--saved { opacity: .5; pointer-events: none; }
+.candidate-card--ignored {
+  display: flex; align-items: center; justify-content: space-between;
+  background: var(--color-surface2);
+  border-style: dashed; opacity: .6;
+  padding: .45rem .75rem;
+}
+.candidate-ignored-label { font-size: .82rem; color: var(--color-text-muted); }
+.candidate-saved-badge {
+  position: absolute; top: .5rem; right: .6rem;
+  font-size: .72rem; color: #4ade80; font-weight: 600;
+}
+
+/* assign row */
+.candidate-assign-row { display: flex; align-items: center; gap: .4rem; }
+.candidate-assign-tabs { display: flex; border: 1px solid var(--color-border); border-radius: 6px; overflow: hidden; flex-shrink: 0; }
+.assign-tab {
+  background: none; border: none; padding: .25rem .55rem;
+  font-size: .78rem; cursor: pointer; color: var(--color-text-muted);
+  transition: background .15s;
+}
+.assign-tab.active { background: var(--color-accent); color: #fff; font-weight: 600; }
+.candidate-ingredient-select { flex: 1; margin: 0; font-size: .83rem; }
+.candidate-ignore-btn { margin-left: auto; flex-shrink: 0; font-size: .9rem; color: var(--color-text-muted) !important; border-color: var(--color-border) !important; }
+
+/* sub-fields */
+.candidate-fields { display: flex; flex-wrap: wrap; gap: .4rem; }
+.candidate-field { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 100px; }
+.candidate-field--small { flex: 0 0 90px; min-width: 80px; }
+.candidate-field span { font-size: .72rem; color: var(--color-text-muted); font-weight: 500; }
+.candidate-field input, .candidate-field select { margin: 0; font-size: .82rem; padding: .28rem .4rem; }
 
 /* ── Misc ─────────────────────────────────────────────────────────── */
 .empty { color: var(--color-text-muted); font-size: .85rem; padding: .5rem 0; }
