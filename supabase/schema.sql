@@ -10,15 +10,17 @@ CREATE TABLE houses (
 );
 
 CREATE TABLE users (
-  id TEXT PRIMARY KEY,
+  id BIGSERIAL PRIMARY KEY,
+  auth_uid UUID UNIQUE,          -- Supabase auth.uid() — used for RLS
   email TEXT,
   name TEXT,
+  hashed_password TEXT,
   created_at TIMESTAMPTZ DEFAULT now()
 );
 
 CREATE TABLE house_users (
   house_id BIGINT REFERENCES houses(id) ON DELETE CASCADE,
-  user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
+  user_id  BIGINT REFERENCES users(id)  ON DELETE CASCADE,
   role TEXT DEFAULT 'member',
   PRIMARY KEY (house_id, user_id)
 );
