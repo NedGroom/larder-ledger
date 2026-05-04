@@ -49,23 +49,23 @@ BEGIN
 END $$;
 
 -- POLICIES: houses
-CREATE POLICY "houses: members can read"           ON houses FOR SELECT      USING (is_house_member(id));
-CREATE POLICY "houses: authenticated can create"   ON houses FOR INSERT      WITH CHECK (auth.uid() IS NOT NULL);
-CREATE POLICY "houses: members can update"         ON houses FOR UPDATE      USING (is_house_member(id));
+CREATE POLICY "houses: members can read"         ON houses FOR SELECT USING (is_house_member(id));
+CREATE POLICY "houses: authenticated can create" ON houses FOR INSERT WITH CHECK (auth.uid() IS NOT NULL);
+CREATE POLICY "houses: members can update"       ON houses FOR UPDATE USING (is_house_member(id));
 
 -- POLICIES: users — own row only
-CREATE POLICY "users: read own"   ON users FOR SELECT USING  (auth_uid = auth.uid());
+CREATE POLICY "users: read own"   ON users FOR SELECT USING    (auth_uid = auth.uid());
 CREATE POLICY "users: insert own" ON users FOR INSERT WITH CHECK (auth_uid = auth.uid());
-CREATE POLICY "users: update own" ON users FOR UPDATE USING  (auth_uid = auth.uid());
+CREATE POLICY "users: update own" ON users FOR UPDATE USING    (auth_uid = auth.uid());
 
 -- POLICIES: house_users
-CREATE POLICY "house_users: members can read"    ON house_users FOR SELECT USING (is_house_member(house_id));
-CREATE POLICY "house_users: insert own"          ON house_users FOR INSERT
+CREATE POLICY "house_users: members can read" ON house_users FOR SELECT USING (is_house_member(house_id));
+CREATE POLICY "house_users: insert own"       ON house_users FOR INSERT
   WITH CHECK (EXISTS (SELECT 1 FROM users WHERE id = user_id AND auth_uid = auth.uid()));
-CREATE POLICY "house_users: delete own"          ON house_users FOR DELETE
+CREATE POLICY "house_users: delete own"       ON house_users FOR DELETE
   USING (EXISTS (SELECT 1 FROM users WHERE id = user_id AND auth_uid = auth.uid()));
 
--- POLICIES: ingredients, meals, stores, shopping_list_items, receipts — house members only
+-- POLICIES: ingredients, meals, stores, shopping_list_items, receipts
 CREATE POLICY "ingredients: house members"         ON ingredients         FOR ALL USING (is_house_member(house_id)) WITH CHECK (is_house_member(house_id));
 CREATE POLICY "meals: house members"               ON meals               FOR ALL USING (is_house_member(house_id)) WITH CHECK (is_house_member(house_id));
 CREATE POLICY "stores: house members"              ON stores              FOR ALL USING (is_house_member(house_id)) WITH CHECK (is_house_member(house_id));
@@ -82,43 +82,3 @@ CREATE POLICY "ingredient_prices: house members"
   ON ingredient_prices FOR ALL
   USING (is_house_member((SELECT house_id FROM ingredients WHERE id = ingredient_id)))
   WITH CHECK (is_house_member((SELECT house_id FROM ingredients WHERE id = ingredient_id)));
-
--- ENABLE RLS (idempotent)
-ALTER TABLE IF EXISTS houses              ENABLE ROW LEVEL SECURITY;
-ALTER TABLE IF EXISTS users               ENABLE ROW LEVEL SECURITY;
-ALTER TABLE IF EXISTS house_users         ENABLE ROW LEVEL SECURITY;
-ALTER TABLE IF EXISTS ingredients         ENABLE ROW LEVEL SECURITY;
-ALTER TABLE IF EXISTS ingredient_prices   ENABLE ROW LEVEL SECURITY;
-ALTER TABLE IF EXISTS meals               ENABLE ROW LEVEL SECURITY;
-ALTER TABLE IF EXISTS meal_ingredients    ENABLE ROW LEVEL SECURITY;
-ALTER TABLE IF EXISTS stores              ENABLE ROW LEVEL SECURITY;
-ALTER TABLE IF EXISTS shopping_list_items ENABLE ROW LEVEL SECURITY;
-ALTER TABLE IF EXISTS receipts            ENABLE ROW LEVEL SECURITY;
-
--- GRANT RPC functions to authenticated users
-GRANT EXECUTE ON FUNCTION auto_generate_shopping_list(INTEGER) TO authenticated;
-GRANT EXECUTE ON FUNCTION meal_ingredient_fractions(INTEGER)   TO authenticated;
-
--- Drop all existing policies before recreating
-DO $$ DECLARE r RECORD;
-BEGIN
-  FOR r IN (
-    SELECT policyname, tablename FROM pg_policies
-    WHERE schemaname = 'public'
-  ) LOOP
-    EXECUTE format('DROP POLICY IF EXISTS %I ON %I', r.policyname, r.tablename);
-  END LOOP;
-END $$;
-
--- PHASE 1: any signed-in user can access all data
--- This blocks unauthenticated (anon) access while the DB schema is fixed for house isolation.
-CREATE POLICY "authenticated full access" ON houses              FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "authenticated full access" ON users               FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "authenticated full access" ON house_users         FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "authenticated full access" ON ingredients         FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "authenticated full access" ON ingredient_prices   FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "authenticated full access" ON meals               FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "authenticated full access" ON meal_ingredients    FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "authenticated full access" ON stores              FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "authenticated full access" ON shopping_list_items FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "authenticated full access" ON receipts            FOR ALL TO authenticated USING (true) WITH CHECK (true);
