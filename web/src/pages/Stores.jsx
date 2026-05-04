@@ -17,7 +17,6 @@ export default function Stores() {
   const [priceIngId, setPriceIngId] = useState('')
   const [priceStoreId, setPriceStoreId] = useState('')
   const [priceVal, setPriceVal] = useState('')
-  const [priceUnit, setPriceUnit] = useState('')
   const [pkgSize, setPkgSize] = useState('')
   const [pkgSizeUnit, setPkgSizeUnit] = useState('')
   const [priceMsg, setPriceMsg] = useState({ text: '', ok: true })
@@ -32,7 +31,7 @@ export default function Stores() {
     setLoading(true)
     const [{ data: s }, { data: i }] = await Promise.all([
       supabase.from('stores').select('*').eq('house_id', house.id).order('name'),
-      supabase.from('ingredients').select('id,name,canonical_unit').eq('house_id', house.id).order('name'),
+      supabase.from('ingredients').select('id,name,canonical_unit,canonical_quantity').eq('house_id', house.id).order('name'),
     ])
     setStores(s ?? [])
     setIngredients(i ?? [])
@@ -79,22 +78,25 @@ export default function Stores() {
     if (!priceVal || !priceIngId || !priceStoreId) return
     const price = +priceVal
     const size = pkgSize ? +pkgSize : null
-    const ppbu = (size && price) ? +(price / size).toFixed(6) : null
+    const ing = ingMap[+priceIngId]
+    // compute price_per_canonical if we have enough info
+    const ppCanonical = (size && price && ing?.canonical_quantity)
+      ? +((price / size) * ing.canonical_quantity).toFixed(6)
+      : null
     setPriceSaving(true)
     const { error } = await supabase.from('ingredient_prices').insert({
       ingredient_id: +priceIngId,
       store_id: +priceStoreId,
       price,
-      price_unit: priceUnit.trim() || null,
       unit_size: size,
       unit_size_unit: pkgSizeUnit.trim() || null,
-      price_per_base_unit: ppbu,
+      price_per_canonical: ppCanonical,
       currency: 'GBP',
     })
     if (error) { setPriceMsg({ text: error.message, ok: false }) }
     else {
       setPriceMsg({ text: 'Price recorded', ok: true })
-      setPriceVal(''); setPriceUnit(''); setPkgSize(''); setPkgSizeUnit('')
+      setPriceVal(''); setPkgSize(''); setPkgSizeUnit('')
       if (+priceStoreId === +viewStoreId) loadPrices(viewStoreId)
     }
     setPriceSaving(false)
@@ -148,10 +150,6 @@ export default function Stores() {
               Price (£)
               <input type="number" step="0.01" min="0" value={priceVal} onChange={e => setPriceVal(e.target.value)} placeholder="1.50" required />
             </label>
-            <label>
-              Package desc.
-              <input value={priceUnit} onChange={e => setPriceUnit(e.target.value)} placeholder="e.g. 500g, 1L" />
-            </label>
           </div>
           <div className="field-row">
             <label>
@@ -163,9 +161,17 @@ export default function Stores() {
               <input value={pkgSizeUnit} onChange={e => setPkgSizeUnit(e.target.value)} placeholder="g / ml" />
             </label>
           </div>
-          {pkgSize && priceVal && (
-            <p className="msg ok">→ £{(+priceVal / +pkgSize).toFixed(4)} per {pkgSizeUnit || 'unit'}</p>
-          )}
+          {(() => {
+            const ing = ingMap[+priceIngId]
+            if (pkgSize && priceVal && ing?.canonical_quantity && ing?.canonical_unit) {
+              const ppC = ((+priceVal / +pkgSize) * ing.canonical_quantity).toFixed(4)
+              return <p className="msg ok">→ £{ppC} per {ing.canonical_quantity}{ing.canonical_unit}</p>
+            }
+            if (pkgSize && priceVal) {
+              return <p className="msg ok">→ £{(+priceVal / +pkgSize).toFixed(4)} per {pkgSizeUnit || 'unit'}</p>
+            }
+            return null
+          })()
           <button className="btn" type="submit" disabled={priceSaving}>
             {priceSaving ? <span className="spinner" /> : 'Save price'}
           </button>
@@ -190,9 +196,9 @@ export default function Stores() {
             <div key={p.id} className="card">
               <span className="name">{p.ingredients?.name ?? '—'}</span>
               <span className="meta">£{Number(p.price).toFixed(2)}</span>
-              {p.price_unit && <span className="pill gray">{p.price_unit}</span>}
-              {p.price_per_base_unit && (
-                <span className="meta">£{Number(p.price_per_base_unit).toFixed(4)}/{p.unit_size_unit || 'unit'}</span>
+              {p.unit_size && <span className="pill gray">{p.unit_size}{p.unit_size_unit || ''}</span>}
+              {p.price_per_canonical && (
+                <span className="meta">£{Number(p.price_per_canonical).toFixed(4)} per {p.unit_size_unit || 'unit'}</span>
               )}
             </div>
           ))}

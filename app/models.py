@@ -54,10 +54,8 @@ class Ingredient(Base):
     # lowercased, trimmed name for uniqueness checks
     name_normalized = Column(String(255), nullable=False)
     canonical_unit = Column(String(64), nullable=True)
-    unit_aliases = Column(JSON, nullable=True)
+    canonical_quantity = Column(Numeric, nullable=True)  # e.g. 100 (for "per 100g")
     has_any = Column(Boolean, default=False)
-    quantity_value = Column(Numeric, nullable=True)
-    quantity_unit = Column(String(64), nullable=True)
     created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     # relationships
@@ -105,12 +103,11 @@ class IngredientPrice(Base):
     ingredient_id = Column(Integer, ForeignKey("ingredients.id"), nullable=False)
     store_id = Column(Integer, ForeignKey("stores.id"), nullable=False)
     price = Column(Numeric, nullable=False)
-    # original unit / package description (e.g. "500g", "1L", "per_item")
-    price_unit = Column(String(64), nullable=True)
-    # optional normalized fields computed at entry time
-    unit_size = Column(Numeric, nullable=True)  # numeric size of package, e.g. 500
-    unit_size_unit = Column(String(32), nullable=True)  # e.g. 'g', 'ml', 'unit'
-    price_per_base_unit = Column(Numeric, nullable=True)  # e.g. price per 100g or per 1 unit
+    # package size (e.g. unit_size=500, unit_size_unit='g')
+    unit_size = Column(Numeric, nullable=True)
+    unit_size_unit = Column(String(32), nullable=True)
+    # price per canonical_quantity of canonical_unit, computed on write
+    price_per_canonical = Column(Numeric, nullable=True)
     currency = Column(String(8), default="GBP")
     source = Column(String(64), nullable=True)
     noted_at = Column(DateTime, default=datetime.utcnow)

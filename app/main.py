@@ -54,6 +54,7 @@ def create_ingredient(house_id: int, payload: schemas.IngredientCreate, session:
         name=payload.name.strip(),
         name_normalized=normalized,
         canonical_unit=payload.canonical_unit,
+        canonical_quantity=payload.canonical_quantity,
         has_any=payload.has_any or False,
     )
     session.add(ingredient)
@@ -117,22 +118,21 @@ def create_ingredient_price(ingredient_id: int, payload: schemas.PriceCreate, se
     if not store:
         raise HTTPException(status_code=404, detail="Store not found")
 
-    # compute normalized price per base unit at entry time if unit_size provided
-    price_per_base_unit = None
-    if payload.unit_size and payload.unit_size > 0:
+    # compute price_per_canonical at entry time if unit_size and ingredient has canonical info
+    price_per_canonical = None
+    if payload.unit_size and payload.unit_size > 0 and ingredient.canonical_quantity:
         try:
-            price_per_base_unit = float(payload.price) / float(payload.unit_size)
+            price_per_canonical = (float(payload.price) / float(payload.unit_size)) * float(ingredient.canonical_quantity)
         except Exception:
-            price_per_base_unit = None
+            price_per_canonical = None
 
     price = models.IngredientPrice(
         ingredient_id=ingredient_id,
         store_id=payload.store_id,
         price=payload.price,
-        price_unit=payload.price_unit,
         unit_size=payload.unit_size,
         unit_size_unit=payload.unit_size_unit,
-        price_per_base_unit=price_per_base_unit,
+        price_per_canonical=price_per_canonical,
         currency=payload.currency,
         source=payload.source,
     )
@@ -178,12 +178,6 @@ def update_ingredient(ingredient_id: int, payload: schemas.IngredientUpdate, ses
     if payload.has_any is not None and payload.has_any != ingredient.has_any:
         ingredient.has_any = payload.has_any
         changed['has_any'] = ingredient.has_any
-    if payload.quantity_value is not None:
-        ingredient.quantity_value = payload.quantity_value
-        changed['quantity_value'] = float(payload.quantity_value)
-    if payload.quantity_unit is not None:
-        ingredient.quantity_unit = payload.quantity_unit
-        changed['quantity_unit'] = payload.quantity_unit
 
     session.add(ingredient)
     session.commit()

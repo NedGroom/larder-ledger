@@ -14,12 +14,14 @@ class HouseOut(BaseModel):
 class IngredientCreate(BaseModel):
     name: str
     canonical_unit: Optional[str] = None
+    canonical_quantity: Optional[float] = None
     has_any: Optional[bool] = False
 
 class IngredientOut(BaseModel):
     id: int
     name: str
     canonical_unit: Optional[str]
+    canonical_quantity: Optional[float]
     has_any: bool
 
     class Config:
@@ -29,7 +31,6 @@ class IngredientOut(BaseModel):
 class PriceCreate(BaseModel):
     store_id: int
     price: float
-    price_unit: Optional[str] = None
     unit_size: Optional[float] = None
     unit_size_unit: Optional[str] = None
     currency: Optional[str] = "GBP"
@@ -41,10 +42,9 @@ class PriceOut(BaseModel):
     ingredient_id: int
     store_id: int
     price: float
-    price_unit: Optional[str]
     unit_size: Optional[float]
     unit_size_unit: Optional[str]
-    price_per_base_unit: Optional[float]
+    price_per_canonical: Optional[float]
     currency: Optional[str]
 
     class Config:
@@ -53,8 +53,6 @@ class PriceOut(BaseModel):
 
 class IngredientUpdate(BaseModel):
     has_any: Optional[bool] = None
-    quantity_value: Optional[float] = None
-    quantity_unit: Optional[str] = None
 
 
 class ShoppingListCreate(BaseModel):

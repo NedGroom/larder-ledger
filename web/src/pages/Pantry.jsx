@@ -8,6 +8,7 @@ export default function Pantry() {
   const [loading, setLoading] = useState(true)
   const [name, setName] = useState('')
   const [unit, setUnit] = useState('')
+  const [canonicalQty, setCanonicalQty] = useState('')
   const [hasAny, setHasAny] = useState(false)
   const [msg, setMsg] = useState({ text: '', ok: true })
   const [saving, setSaving] = useState(false)
@@ -35,13 +36,14 @@ export default function Pantry() {
       name: name.trim(),
       name_normalized: name.trim().toLowerCase(),
       canonical_unit: unit.trim() || null,
+      canonical_quantity: canonicalQty ? +canonicalQty : null,
       has_any: hasAny,
     })
     if (error) {
       setMsg({ text: error.message, ok: false })
     } else {
       setMsg({ text: `"${name.trim()}" added`, ok: true })
-      setName(''); setUnit(''); setHasAny(false)
+      setName(''); setUnit(''); setCanonicalQty(''); setHasAny(false)
       await load()
     }
     setSaving(false)
@@ -76,6 +78,10 @@ export default function Pantry() {
             Unit
             <input value={unit} onChange={e => setUnit(e.target.value)} placeholder="g / ml / unit" />
           </label>
+          <label style={{ maxWidth: 90 }}>
+            Per qty
+            <input type="number" min="0" step="any" value={canonicalQty} onChange={e => setCanonicalQty(e.target.value)} placeholder="100" />
+          </label>
         </div>
         <div className="toggle-wrap" style={{ marginTop: '.5rem' }}>
           <label className="toggle">
@@ -105,7 +111,9 @@ export default function Pantry() {
       {filtered.map(ing => (
         <div key={ing.id} className="card">
           <span className="name">{ing.name}</span>
-          {ing.canonical_unit && <span className="meta">{ing.canonical_unit}</span>}
+          {ing.canonical_unit && (
+            <span className="meta">per {ing.canonical_quantity ?? ''}{ing.canonical_unit}</span>
+          )}
           <span className={`pill ${ing.has_any ? 'green' : 'red'}`}>
             {ing.has_any ? 'In stock' : 'Missing'}
           </span>
