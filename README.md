@@ -34,37 +34,46 @@ docs/             PRD, TDD, setup guides
 .github/workflows/  GitHub Actions — deploys web/ to GitHub Pages on push to main
 ```
 
+## Quick commands
+
+**Run the frontend**
+```bash
+cd web && npm run dev        # http://localhost:5173/larder-ledger/
+```
+
+**Apply DB migrations**
+```bash
+echo "y" | supabase db push
+```
+
+**Apply RLS policies** (after any change to `supabase/policies.sql`)
+```bash
+supabase db query --linked -f supabase/policies.sql
+```
+
+**Apply RPC functions** (after any change to `supabase/functions.sql`)
+```bash
+supabase db query --linked -f supabase/functions.sql
+```
+
+**Ad-hoc DB query**
+```bash
+supabase db query --linked "SELECT * FROM houses;"
+```
+
 ## Local development
 
 ```bash
 cd web
-npm install
-npm run dev        # http://localhost:5173/larder-ledger/
+npm install       # first time only
+npm run dev       # http://localhost:5173/larder-ledger/
 ```
 
 The app talks directly to the live Supabase project — no local backend needed.
-Copy `.env.example` to `.env` if you need to override the Supabase URL/key.
+Copy `web/.env.example` to `web/.env` if you need to override the Supabase URL/key.
 
 ## Deploying
 
 Push to `main` — GitHub Actions builds `web/` and deploys to GitHub Pages automatically.
 
-## Database
-
-Migrations are managed with the Supabase CLI.
-
-```bash
-# Link to the project (one-time)
-supabase link --project-ref uqadardaukfbrewbuhgk
-
-# Apply pending migrations
-echo "y" | supabase db push
-
-# Apply RLS policies (policies use auth.uid() so must go via db query, not db push)
-supabase db query --linked -f supabase/policies.sql
-
-# Apply RPC functions
-supabase db query --linked -f supabase/functions.sql
-```
-
-See `docs/supabase-setup.md` for full setup from scratch.
+See `docs/supabase-setup.md` for full Supabase setup from scratch.
