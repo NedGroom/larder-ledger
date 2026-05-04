@@ -36,17 +36,50 @@ export default function App() {
   }, [])
 
   // ── House auto-select ───────────────────────────────────────────────────────
-  // On login, pick the first existing house or create one named after the user.
+  // On login, find the user's house via house_users, or create one.
   useEffect(() => {
     if (!session) { setHouse(null); return }
     async function initHouse() {
-      const { data, error } = await supabase.from('houses').select('*').limit(1).single()
-      if (data) { setHouse(data); return }
-      // No house yet — create one
+      const userId = session.user.id
+
+      // Ensure user row exists in public.users (trigger handles new signups,
+      // but existing users before the trigger was added need this)
+      await supabase.from('users').upsert(
+        { id: userId, email: session.user.email },
+        { onConflict: 'id', ignoreDuplicates: true }
+      )
+
+      // Look up houses the user is a member of
+      const { data: membership } = await supabase
+        .from('house_users')
+        .select('house_id, houses(*)')
+        .eq('user_id', userId)
+        .limit(1)
+        .single()
+
+      if (membership?.houses) {
+        setHouse(membership.houses)
+        return
+      }
+
+      // No house yet — create one and add the user as owner
       const email = session.user.email
       const defaultName = email.split('@')[0] + "'s house"
-      const { data: created } = await supabase.from('houses').insert({ name: defaultName }).select().single()
-      setHouse(created)
+      const { data: created, error } = await supabase
+        .from('houses')
+        .insert({ name: defaultName })
+        .select()
+        .single()
+
+      if (created) {
+        // Register user as owner in house_users
+        await supabase.from('house_users').insert({
+          house_id: created.id,
+          user_id: userId,
+          role: 'owner',
+        })
+        setHouse(created)
+      }
     }
     initHouse()
   }, [session])
