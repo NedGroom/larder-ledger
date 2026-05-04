@@ -66,20 +66,31 @@ serve(async (req) => {
     }
 
     // Resolve the best available model from the Copilot models endpoint
-    let model = body.model || 'gpt-4o'
+    let model = 'gpt-4o' // fallback, will be overridden below
     try {
       const modelsResp = await fetch('https://api.githubcopilot.com/models', {
         headers: copilotHeaders,
       })
       if (modelsResp.ok) {
         const modelsData = await modelsResp.json()
-        const models: string[] = (modelsData.data ?? modelsData.models ?? []).map((m: { id: string }) => m.id)
-        // Prefer gpt-4o, then gpt-4, then first available chat model
-        const preferred = ['gpt-4o', 'gpt-4o-mini', 'gpt-4', 'claude-3.5-sonnet', 'claude-3.7-sonnet']
-        const pick = preferred.find(p => models.includes(p)) ?? models[0]
+        // Only use models that are enabled and support /chat/completions
+        const available: string[] = (modelsData.data ?? [])
+          .filter((m: { policy?: { state: string }, supported_endpoints?: string[] }) =>
+            m.policy?.state !== 'disabled' &&
+            (m.supported_endpoints ?? []).includes('/chat/completions')
+          )
+          .map((m: { id: string }) => m.id)
+
+        // Prefer in this order — pick the first one available
+        const preferred = [
+          'gpt-5-mini', 'gpt-5.2', 'gpt-5.4',
+          'claude-sonnet-4', 'claude-sonnet-4.5', 'claude-sonnet-4.6',
+          'claude-haiku-4.5',
+        ]
+        const pick = preferred.find(p => available.includes(p)) ?? available[0]
         if (pick) model = pick
       }
-    } catch (_) { /* fall through with default */ }
+    } catch (_) { /* fall through */ }
 
     const upstream = await fetch(COPILOT_URL, {
       method: 'POST',
