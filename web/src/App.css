@@ -1,0 +1,217 @@
+/* ── Reset & base ─────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: system-ui, -apple-system, Roboto, sans-serif;
+  background: #f7f7f5;
+  color: #1a1a1a;
+  min-height: 100vh;
+}
+
+/* ── Layout ───────────────────────────────────────────────────────── */
+.loading {
+  display: flex; align-items: center; justify-content: center;
+  height: 100vh; color: #666; font-size: 1rem;
+}
+header {
+  background: #2d6a4f; color: white;
+  padding: .75rem 1rem;
+  display: flex; align-items: center; gap: .75rem;
+  position: sticky; top: 0; z-index: 10;
+}
+header h1 { font-size: 1.15rem; font-weight: 700; }
+.header-right { margin-left: auto; display: flex; align-items: center; gap: .75rem; }
+.header-right span { font-size: .8rem; opacity: .85; }
+.signout-btn {
+  background: rgba(255,255,255,.15); border: 1px solid rgba(255,255,255,.3);
+  color: white; padding: .3rem .7rem; border-radius: 4px;
+  font-size: .78rem; cursor: pointer;
+}
+.signout-btn:hover { background: rgba(255,255,255,.25); }
+
+nav {
+  background: #1b4332; display: flex; overflow-x: auto;
+  border-bottom: 1px solid #155534;
+}
+nav button {
+  background: none; border: none; color: #b7e4c7;
+  padding: .65rem 1.1rem; cursor: pointer; font-size: .88rem;
+  white-space: nowrap; border-bottom: 3px solid transparent;
+  transition: color .15s;
+}
+nav button.active, nav button:hover { color: white; border-bottom-color: #52b788; }
+
+.page { padding: 1rem; max-width: 680px; margin: 0 auto; }
+
+/* ── Typography ───────────────────────────────────────────────────── */
+h2 { font-size: 1rem; color: #2d6a4f; margin: 1.1rem 0 .5rem; font-weight: 700; }
+h3 { font-size: .95rem; color: #333; margin: .8rem 0 .4rem; }
+
+/* ── Form elements ────────────────────────────────────────────────── */
+label { display: block; font-size: .85rem; color: #555; margin: .4rem 0; }
+input[type=text], input[type=email], input[type=password],
+input[type=number], input[type=search], select, textarea {
+  width: 100%; padding: .45rem .65rem;
+  border: 1px solid #d0d0d0; border-radius: 5px;
+  font-size: .9rem; margin-top: 3px; background: white;
+  font-family: inherit;
+}
+textarea { resize: vertical; min-height: 80px; }
+input:focus, select:focus, textarea:focus {
+  outline: none; border-color: #52b788;
+  box-shadow: 0 0 0 2px rgba(82,183,136,.2);
+}
+.field-row { display: flex; gap: .5rem; align-items: flex-end; }
+.field-row label { flex: 1; }
+
+/* ── Buttons ──────────────────────────────────────────────────────── */
+.btn {
+  display: inline-flex; align-items: center; gap: .35rem;
+  background: #2d6a4f; color: white; border: none;
+  padding: .5rem 1.1rem; border-radius: 5px;
+  font-size: .9rem; cursor: pointer; margin-top: .5rem;
+  font-family: inherit; transition: background .15s;
+}
+.btn:hover { background: #1b4332; }
+.btn:disabled { background: #aaa; cursor: not-allowed; }
+.btn.secondary { background: #666; }
+.btn.secondary:hover { background: #444; }
+.btn.danger { background: #c0392b; }
+.btn.danger:hover { background: #922b21; }
+.btn.small { padding: .28rem .65rem; font-size: .8rem; margin-top: 0; }
+.btn.ghost {
+  background: none; color: #2d6a4f;
+  border: 1px solid #2d6a4f;
+}
+.btn.ghost:hover { background: #eaf6ef; }
+.btn-row { display: flex; gap: .5rem; flex-wrap: wrap; margin-top: .6rem; }
+
+/* ── Cards ────────────────────────────────────────────────────────── */
+.card {
+  background: white; border-radius: 8px;
+  padding: .75rem 1rem; margin: .4rem 0;
+  box-shadow: 0 1px 3px rgba(0,0,0,.07);
+  display: flex; align-items: center; gap: .6rem; flex-wrap: wrap;
+}
+.card .name { font-weight: 600; flex: 1; min-width: 100px; }
+.card .meta { font-size: .8rem; color: #888; }
+.card-body { background: white; border-radius: 8px; padding: .9rem 1rem; margin: .4rem 0; box-shadow: 0 1px 3px rgba(0,0,0,.07); }
+
+/* ── Pills ────────────────────────────────────────────────────────── */
+.pill {
+  display: inline-block; padding: 2px 9px;
+  border-radius: 12px; font-size: .75rem; font-weight: 600;
+}
+.pill.green  { background: #d8f3dc; color: #1b4332; }
+.pill.red    { background: #ffe0e0; color: #7b1f1f; }
+.pill.blue   { background: #dbeafe; color: #1e3a5f; }
+.pill.orange { background: #fff3cd; color: #7d4e00; }
+.pill.gray   { background: #ececec; color: #555; }
+
+/* ── Toggle switch ────────────────────────────────────────────────── */
+.toggle-wrap { display: flex; align-items: center; gap: .5rem; margin: .4rem 0; }
+.toggle-wrap span { font-size: .85rem; color: #555; }
+.toggle {
+  position: relative; width: 38px; height: 21px;
+  display: inline-block; flex-shrink: 0;
+}
+.toggle input { opacity: 0; width: 0; height: 0; }
+.toggle-slider {
+  position: absolute; inset: 0;
+  background: #ccc; border-radius: 21px; cursor: pointer;
+  transition: background .2s;
+}
+.toggle-slider::before {
+  content: ''; position: absolute;
+  width: 15px; height: 15px; border-radius: 50%;
+  left: 3px; top: 3px; background: white;
+  transition: transform .2s;
+}
+.toggle input:checked + .toggle-slider { background: #52b788; }
+.toggle input:checked + .toggle-slider::before { transform: translateX(17px); }
+
+/* ── Divider ──────────────────────────────────────────────────────── */
+hr.divider { border: none; border-top: 1px solid #ebebeb; margin: 1rem 0; }
+
+/* ── Feedback messages ────────────────────────────────────────────── */
+.msg { font-size: .85rem; margin-top: .4rem; min-height: 1.2rem; }
+.msg.ok  { color: #2d6a4f; }
+.msg.err { color: #c0392b; }
+
+/* ── Fraction bar ─────────────────────────────────────────────────── */
+.fbar { width: 72px; height: 8px; background: #e0e0e0; border-radius: 4px; overflow: hidden; display: inline-block; vertical-align: middle; }
+.fbar-fill { height: 100%; background: #52b788; border-radius: 4px; transition: width .3s; }
+
+/* ── Sign-in box ──────────────────────────────────────────────────── */
+.signin-wrap {
+  min-height: 100vh; display: flex;
+  align-items: center; justify-content: center;
+  background: #f7f7f5;
+}
+.signin-box {
+  background: white; padding: 2rem 1.75rem;
+  border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,.1);
+  width: 100%; max-width: 360px;
+}
+.signin-box .logo { font-size: 2.5rem; text-align: center; margin-bottom: .5rem; }
+.signin-box h1 { text-align: center; font-size: 1.3rem; color: #2d6a4f; margin-bottom: 1.25rem; }
+.signin-box .btn { width: 100%; justify-content: center; margin-top: .75rem; }
+
+/* ── Modal overlay ────────────────────────────────────────────────── */
+.modal-overlay {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,.45); z-index: 100;
+  display: flex; align-items: flex-end;
+  justify-content: center;
+}
+@media (min-width: 500px) {
+  .modal-overlay { align-items: center; }
+}
+.modal {
+  background: white; border-radius: 12px 12px 0 0;
+  padding: 1.25rem 1rem 2rem;
+  width: 100%; max-width: 640px;
+  max-height: 92vh; overflow-y: auto;
+}
+@media (min-width: 500px) {
+  .modal { border-radius: 12px; padding: 1.5rem; }
+}
+.modal-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 1rem;
+}
+.modal-header h2 { margin: 0; }
+.modal-close {
+  background: none; border: none; font-size: 1.3rem;
+  cursor: pointer; color: #888; line-height: 1;
+}
+
+/* ── Ingredient picker (in Meals) ─────────────────────────────────── */
+.ing-picker { border: 1px solid #e0e0e0; border-radius: 6px; max-height: 260px; overflow-y: auto; margin-top: .3rem; }
+.ing-picker-row {
+  display: flex; align-items: center; gap: .5rem;
+  padding: .45rem .75rem; border-bottom: 1px solid #f0f0f0;
+}
+.ing-picker-row:last-child { border-bottom: none; }
+.ing-picker-row input[type=checkbox] { width: 16px; height: 16px; flex-shrink: 0; margin: 0; }
+.ing-picker-row .ing-name { flex: 1; font-size: .88rem; }
+.ing-picker-row input[type=number] { width: 70px; margin: 0; padding: .3rem .4rem; font-size: .82rem; }
+.ing-picker-row .ing-unit { font-size: .78rem; color: #888; width: 40px; }
+
+/* ── Receipt candidates table ─────────────────────────────────────── */
+.candidates { margin-top: .75rem; }
+.candidate-row {
+  display: grid; grid-template-columns: 1fr 80px 80px 1fr auto;
+  gap: .4rem; align-items: center;
+  padding: .4rem .5rem; border-bottom: 1px solid #f0f0f0;
+  font-size: .85rem;
+}
+.candidate-row.header { font-weight: 600; color: #555; font-size: .78rem; background: #f9f9f9; border-radius: 5px 5px 0 0; }
+.candidate-row input[type=text], .candidate-row input[type=number] { margin: 0; font-size: .83rem; }
+.candidate-row select { margin: 0; font-size: .83rem; }
+
+/* ── Misc ─────────────────────────────────────────────────────────── */
+.empty { color: #999; font-size: .85rem; padding: .5rem 0; }
+.section-title { display: flex; align-items: center; justify-content: space-between; }
+.spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid rgba(255,255,255,.4); border-top-color: white; border-radius: 50%; animation: spin .6s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
