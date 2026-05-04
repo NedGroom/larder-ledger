@@ -1,0 +1,48 @@
+name: Log Drain — Supabase → Storage
+
+on:
+  schedule:
+    - cron: '0 * * * *'   # every hour on the hour
+  workflow_dispatch:        # also triggerable manually from GitHub Actions UI
+    inputs:
+      lookback_minutes:
+        description: 'How many minutes back to fetch (default: 65)'
+        required: false
+        default: '65'
+      sources:
+        description: 'Comma-separated log sources'
+        required: false
+        default: 'edge_logs,postgres_logs,auth_logs'
+      dry_run:
+        description: 'Dry run — fetch but do not upload'
+        type: boolean
+        required: false
+        default: false
+
+jobs:
+  drain:
+    name: Fetch & upload logs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install @supabase/supabase-js
+        run: npm install --no-save @supabase/supabase-js
+
+      - name: Run log drain
+        env:
+          SUPABASE_ACCESS_TOKEN:    ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_REF:     uqadardaukfbrewbuhgk
+          SUPABASE_URL:             https://uqadardaukfbrewbuhgk.supabase.co
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          LOG_LOOKBACK_MINUTES:     ${{ github.event.inputs.lookback_minutes || '65' }}
+          LOG_SOURCES:              ${{ github.event.inputs.sources || 'edge_logs,postgres_logs,auth_logs' }}
+          DRY_RUN:                  ${{ github.event.inputs.dry_run == 'true' && '1' || '0' }}
+        run: node --input-type=module < scripts/fetch-logs.js
+
