@@ -14,9 +14,9 @@ set -e
 REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
 WEB_DIR="$REPO_ROOT/web"
 MSG="${1:-deploy: $(date '+%Y-%m-%d %H:%M')}"
-SOURCE_BRANCH="${2:-$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD)}"
+CURRENT=$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD)
 
-echo "▶  Source branch : $SOURCE_BRANCH"
+echo "▶  Branch        : $CURRENT"
 echo "▶  Commit message: $MSG"
 echo ""
 
@@ -36,21 +36,15 @@ if ! git -C "$REPO_ROOT" diff --quiet || ! git -C "$REPO_ROOT" diff --cached --q
   git -C "$REPO_ROOT" commit -m "$MSG"
 fi
 
-# ── 3. Push to main (merging source branch if different) ──────────────────────
-CURRENT=$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD)
-if [ "$CURRENT" != "main" ]; then
-  echo ""
-  echo "🔀 Merging $CURRENT → main..."
-  git -C "$REPO_ROOT" checkout main
-  git -C "$REPO_ROOT" merge "$CURRENT" --no-ff -m "Merge $CURRENT into main"
-fi
-
+# ── 3. Push current branch tip to origin/main (no local merge) ───────────────
 echo ""
-echo "🚀 Pushing to origin/main..."
-git -C "$REPO_ROOT" push origin main
+echo "🚀 Pushing $CURRENT → origin/main (no local merge)..."
+git -C "$REPO_ROOT" push origin HEAD:main
 
 echo ""
 echo "✅ Done! GitHub Actions is now building and deploying."
 echo "   Watch progress: https://github.com/NedGroom/larder-ledger/actions"
 echo "   Live site:      https://nedgroom.github.io/larder-ledger/"
+
+
 
