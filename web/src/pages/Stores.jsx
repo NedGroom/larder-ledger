@@ -1,0 +1,204 @@
+import { useState, useEffect, useCallback } from 'react'
+import { supabase } from '../lib/supabase.js'
+import { useApp } from '../App.jsx'
+
+export default function Stores() {
+  const { house } = useApp()
+  const [stores, setStores] = useState([])
+  const [ingredients, setIngredients] = useState([])
+  const [loading, setLoading] = useState(true)
+
+  // New store form
+  const [storeName, setStoreName] = useState('')
+  const [storeMsg, setStoreMsg] = useState({ text: '', ok: true })
+  const [storeSaving, setStoreSaving] = useState(false)
+
+  // New price form
+  const [priceIngId, setPriceIngId] = useState('')
+  const [priceStoreId, setPriceStoreId] = useState('')
+  const [priceVal, setPriceVal] = useState('')
+  const [priceUnit, setPriceUnit] = useState('')
+  const [pkgSize, setPkgSize] = useState('')
+  const [pkgSizeUnit, setPkgSizeUnit] = useState('')
+  const [priceMsg, setPriceMsg] = useState({ text: '', ok: true })
+  const [priceSaving, setPriceSaving] = useState(false)
+
+  // Price list for selected store
+  const [viewStoreId, setViewStoreId] = useState('')
+  const [prices, setPrices] = useState([])
+  const [pricesLoading, setPricesLoading] = useState(false)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    const [{ data: s }, { data: i }] = await Promise.all([
+      supabase.from('stores').select('*').eq('house_id', house.id).order('name'),
+      supabase.from('ingredients').select('id,name,canonical_unit').eq('house_id', house.id).order('name'),
+    ])
+    setStores(s ?? [])
+    setIngredients(i ?? [])
+    if (s?.length) {
+      setPriceStoreId(s[0].id)
+      setViewStoreId(s[0].id)
+    }
+    if (i?.length) setPriceIngId(i[0].id)
+    setLoading(false)
+  }, [house.id])
+
+  useEffect(() => { load() }, [load])
+
+  async function loadPrices(storeId) {
+    setPricesLoading(true)
+    const { data } = await supabase
+      .from('ingredient_prices')
+      .select('*, ingredients(name)')
+      .eq('store_id', storeId)
+      .order('noted_at', { ascending: false })
+    setPrices(data ?? [])
+    setPricesLoading(false)
+  }
+
+  useEffect(() => { if (viewStoreId) loadPrices(viewStoreId) }, [viewStoreId])
+
+  async function addStore(e) {
+    e.preventDefault()
+    if (!storeName.trim()) return
+    setStoreSaving(true)
+    const { data, error } = await supabase.from('stores')
+      .insert({ house_id: house.id, name: storeName.trim() }).select().single()
+    if (error) { setStoreMsg({ text: error.message, ok: false }) }
+    else {
+      setStoreMsg({ text: `"${data.name}" added`, ok: true })
+      setStoreName('')
+      await load()
+    }
+    setStoreSaving(false)
+  }
+
+  async function addPrice(e) {
+    e.preventDefault()
+    if (!priceVal || !priceIngId || !priceStoreId) return
+    const price = +priceVal
+    const size = pkgSize ? +pkgSize : null
+    const ppbu = (size && price) ? +(price / size).toFixed(6) : null
+    setPriceSaving(true)
+    const { error } = await supabase.from('ingredient_prices').insert({
+      ingredient_id: +priceIngId,
+      store_id: +priceStoreId,
+      price,
+      price_unit: priceUnit.trim() || null,
+      unit_size: size,
+      unit_size_unit: pkgSizeUnit.trim() || null,
+      price_per_base_unit: ppbu,
+      currency: 'GBP',
+    })
+    if (error) { setPriceMsg({ text: error.message, ok: false }) }
+    else {
+      setPriceMsg({ text: 'Price recorded', ok: true })
+      setPriceVal(''); setPriceUnit(''); setPkgSize(''); setPkgSizeUnit('')
+      if (+priceStoreId === +viewStoreId) loadPrices(viewStoreId)
+    }
+    setPriceSaving(false)
+  }
+
+  const ingMap = Object.fromEntries(ingredients.map(i => [i.id, i]))
+
+  return (
+    <>
+      <h2>Add store</h2>
+      <form onSubmit={addStore}>
+        <label>
+          Store name
+          <input value={storeName} onChange={e => setStoreName(e.target.value)} placeholder="e.g. Tesco, Lidl" required />
+        </label>
+        <button className="btn" type="submit" disabled={storeSaving}>
+          {storeSaving ? <span className="spinner" /> : '+ Add store'}
+        </button>
+        {storeMsg.text && <p className={`msg ${storeMsg.ok ? 'ok' : 'err'}`}>{storeMsg.text}</p>}
+      </form>
+
+      {stores.length > 0 && (
+        <div style={{ marginTop: '.5rem', display: 'flex', gap: '.4rem', flexWrap: 'wrap' }}>
+          {stores.map(s => <span key={s.id} className="pill blue">{s.name}</span>)}
+        </div>
+      )}
+
+      <hr className="divider" />
+
+      <h2>Record price</h2>
+      {loading ? <p className="empty">Loading…</p> : stores.length === 0 ? (
+        <p className="empty">Add a store first.</p>
+      ) : (
+        <form onSubmit={addPrice}>
+          <div className="field-row">
+            <label>
+              Ingredient
+              <select value={priceIngId} onChange={e => setPriceIngId(e.target.value)}>
+                {ingredients.map(i => <option key={i.id} value={i.id}>{i.name}</option>)}
+              </select>
+            </label>
+            <label>
+              Store
+              <select value={priceStoreId} onChange={e => setPriceStoreId(e.target.value)}>
+                {stores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+            </label>
+          </div>
+          <div className="field-row">
+            <label>
+              Price (£)
+              <input type="number" step="0.01" min="0" value={priceVal} onChange={e => setPriceVal(e.target.value)} placeholder="1.50" required />
+            </label>
+            <label>
+              Package desc.
+              <input value={priceUnit} onChange={e => setPriceUnit(e.target.value)} placeholder="e.g. 500g, 1L" />
+            </label>
+          </div>
+          <div className="field-row">
+            <label>
+              Package size
+              <input type="number" min="0" step="any" value={pkgSize} onChange={e => setPkgSize(e.target.value)} placeholder="500" />
+            </label>
+            <label style={{ maxWidth: 90 }}>
+              Size unit
+              <input value={pkgSizeUnit} onChange={e => setPkgSizeUnit(e.target.value)} placeholder="g / ml" />
+            </label>
+          </div>
+          {pkgSize && priceVal && (
+            <p className="msg ok">→ £{(+priceVal / +pkgSize).toFixed(4)} per {pkgSizeUnit || 'unit'}</p>
+          )}
+          <button className="btn" type="submit" disabled={priceSaving}>
+            {priceSaving ? <span className="spinner" /> : 'Save price'}
+          </button>
+          {priceMsg.text && <p className={`msg ${priceMsg.ok ? 'ok' : 'err'}`}>{priceMsg.text}</p>}
+        </form>
+      )}
+
+      <hr className="divider" />
+
+      <h2>Prices by store</h2>
+      {stores.length > 0 && (
+        <>
+          <label>
+            Store
+            <select value={viewStoreId} onChange={e => setViewStoreId(e.target.value)}>
+              {stores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+          </label>
+          {pricesLoading && <p className="empty">Loading…</p>}
+          {!pricesLoading && prices.length === 0 && <p className="empty">No prices recorded for this store.</p>}
+          {prices.map(p => (
+            <div key={p.id} className="card">
+              <span className="name">{p.ingredients?.name ?? '—'}</span>
+              <span className="meta">£{Number(p.price).toFixed(2)}</span>
+              {p.price_unit && <span className="pill gray">{p.price_unit}</span>}
+              {p.price_per_base_unit && (
+                <span className="meta">£{Number(p.price_per_base_unit).toFixed(4)}/{p.unit_size_unit || 'unit'}</span>
+              )}
+            </div>
+          ))}
+        </>
+      )}
+    </>
+  )
+}
+

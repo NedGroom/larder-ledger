@@ -1,80 +1,108 @@
--- Supabase Row Level Security (RLS) policies for LarderLedger
--- Run after creating the tables. These are example policies and should be reviewed.
+-- RLS / policies for larder_ledger
+-- WARNING: These policies are intentionally permissive to make initial testing easy.
+-- For production you should tighten policies to enforce ownership/house membership
+-- and map your auth.uid() (typically a UUID) to the integer users.id in this DB.
 
--- Enable RLS on tables
-ALTER TABLE ingredients ENABLE ROW LEVEL SECURITY;
-ALTER TABLE houses ENABLE ROW LEVEL SECURITY;
-ALTER TABLE house_users ENABLE ROW LEVEL SECURITY;
-ALTER TABLE meals ENABLE ROW LEVEL SECURITY;
-ALTER TABLE meal_ingredients ENABLE ROW LEVEL SECURITY;
-ALTER TABLE stores ENABLE ROW LEVEL SECURITY;
-ALTER TABLE ingredient_prices ENABLE ROW LEVEL SECURITY;
-ALTER TABLE shopping_list_items ENABLE ROW LEVEL SECURITY;
-ALTER TABLE receipts ENABLE ROW LEVEL SECURITY;
+-- Enable RLS on all app tables
+ALTER TABLE IF EXISTS houses              ENABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS house_users         ENABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS ingredients         ENABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS ingredient_prices   ENABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS meals               ENABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS meal_ingredients    ENABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS stores              ENABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS shopping_list_items ENABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS receipts            ENABLE ROW LEVEL SECURITY;
 
--- Helper function: check membership
-CREATE OR REPLACE FUNCTION is_house_member(hid BIGINT)
-RETURNS BOOLEAN LANGUAGE sql STABLE AS $$
-  SELECT EXISTS (SELECT 1 FROM house_users hu WHERE hu.house_id = hid AND hu.user_id = auth.uid());
-$$;
+-- Example permissive policies for testing with an 'authenticated' role
+-- Adjust these to implement proper checks (uploaded_by, house membership, etc.)
 
--- Houses: allow insert for authenticated users; select if member; update/delete if member (owners may add extra rules)
-CREATE POLICY "houses_select_members" ON houses FOR SELECT USING (EXISTS(SELECT 1 FROM house_users hu WHERE hu.house_id = houses.id AND hu.user_id = auth.uid()));
-CREATE POLICY "houses_insert_auth" ON houses FOR INSERT WITH CHECK (auth.role() = 'authenticated');
-CREATE POLICY "houses_update_members" ON houses FOR UPDATE USING (EXISTS(SELECT 1 FROM house_users hu WHERE hu.house_id = houses.id AND hu.user_id = auth.uid()));
-CREATE POLICY "houses_delete_members" ON houses FOR DELETE USING (EXISTS(SELECT 1 FROM house_users hu WHERE hu.house_id = houses.id AND hu.user_id = auth.uid()));
+DROP POLICY IF EXISTS "Allow authenticated select on receipts" ON receipts;
+CREATE POLICY "Allow authenticated select on receipts"
+  ON receipts FOR SELECT
+  TO authenticated
+  USING (true);
 
--- House_users: allow insert if user is same as auth.uid (join a house) OR existing member can invite
-CREATE POLICY "house_users_insert_self" ON house_users FOR INSERT WITH CHECK (new.user_id = auth.uid());
-CREATE POLICY "house_users_select_member" ON house_users FOR SELECT USING (house_users.user_id = auth.uid() OR EXISTS(SELECT 1 FROM house_users hu WHERE hu.house_id = house_users.house_id AND hu.user_id = auth.uid()));
+DROP POLICY IF EXISTS "Allow authenticated insert on receipts" ON receipts;
+CREATE POLICY "Allow authenticated insert on receipts"
+  ON receipts FOR INSERT
+  TO authenticated
+  WITH CHECK (true);
 
--- Ingredients: only members of the house can select/insert/update/delete
-CREATE POLICY "ingredients_select" ON ingredients FOR SELECT USING (is_house_member(house_id));
-CREATE POLICY "ingredients_insert" ON ingredients FOR INSERT WITH CHECK (is_house_member(new.house_id));
-CREATE POLICY "ingredients_update" ON ingredients FOR UPDATE USING (is_house_member(house_id));
-CREATE POLICY "ingredients_delete" ON ingredients FOR DELETE USING (is_house_member(house_id));
+DROP POLICY IF EXISTS "Allow authenticated update on receipts" ON receipts;
+CREATE POLICY "Allow authenticated update on receipts"
+  ON receipts FOR UPDATE
+  TO authenticated
+  USING (true)
+  WITH CHECK (true);
 
--- Meals
-CREATE POLICY "meals_select" ON meals FOR SELECT USING (is_house_member(house_id));
-CREATE POLICY "meals_insert" ON meals FOR INSERT WITH CHECK (is_house_member(new.house_id));
-CREATE POLICY "meals_update" ON meals FOR UPDATE USING (is_house_member(house_id));
-CREATE POLICY "meals_delete" ON meals FOR DELETE USING (is_house_member(house_id));
+-- Similarly for ingredients and prices (permissive for testing)
+DROP POLICY IF EXISTS "Allow authenticated select on ingredients" ON ingredients;
+CREATE POLICY "Allow authenticated select on ingredients"
+  ON ingredients FOR SELECT
+  TO authenticated
+  USING (true);
 
--- Meal ingredients
-CREATE POLICY "meal_ingredients_select" ON meal_ingredients FOR SELECT USING (EXISTS (SELECT 1 FROM meals m WHERE m.id = meal_ingredients.meal_id AND is_house_member(m.house_id)));
-CREATE POLICY "meal_ingredients_insert" ON meal_ingredients FOR INSERT WITH CHECK (EXISTS (SELECT 1 FROM meals m WHERE m.id = new.meal_id AND is_house_member(m.house_id)));
-CREATE POLICY "meal_ingredients_update" ON meal_ingredients FOR UPDATE USING (EXISTS (SELECT 1 FROM meals m WHERE m.id = meal_ingredients.meal_id AND is_house_member(m.house_id)));
-CREATE POLICY "meal_ingredients_delete" ON meal_ingredients FOR DELETE USING (EXISTS (SELECT 1 FROM meals m WHERE m.id = meal_ingredients.meal_id AND is_house_member(m.house_id)));
+DROP POLICY IF EXISTS "Allow authenticated insert on ingredients" ON ingredients;
+CREATE POLICY "Allow authenticated insert on ingredients"
+  ON ingredients FOR INSERT
+  TO authenticated
+  WITH CHECK (true);
 
--- Stores
-CREATE POLICY "stores_select" ON stores FOR SELECT USING (is_house_member(house_id));
-CREATE POLICY "stores_insert" ON stores FOR INSERT WITH CHECK (is_house_member(new.house_id));
-CREATE POLICY "stores_update" ON stores FOR UPDATE USING (is_house_member(house_id));
-CREATE POLICY "stores_delete" ON stores FOR DELETE USING (is_house_member(house_id));
+DROP POLICY IF EXISTS "Allow authenticated select on ingredient_prices" ON ingredient_prices;
+CREATE POLICY "Allow authenticated select on ingredient_prices"
+  ON ingredient_prices FOR SELECT
+  TO authenticated
+  USING (true);
 
--- Ingredient prices
-CREATE POLICY "prices_select" ON ingredient_prices FOR SELECT USING (EXISTS (SELECT 1 FROM ingredients i WHERE i.id = ingredient_prices.ingredient_id AND is_house_member(i.house_id)));
-CREATE POLICY "prices_insert" ON ingredient_prices FOR INSERT WITH CHECK (EXISTS (SELECT 1 FROM ingredients i WHERE i.id = new.ingredient_id AND is_house_member(i.house_id)));
-CREATE POLICY "prices_update" ON ingredient_prices FOR UPDATE USING (EXISTS (SELECT 1 FROM ingredients i WHERE i.id = ingredient_prices.ingredient_id AND is_house_member(i.house_id)));
-CREATE POLICY "prices_delete" ON ingredient_prices FOR DELETE USING (EXISTS (SELECT 1 FROM ingredients i WHERE i.id = ingredient_prices.ingredient_id AND is_house_member(i.house_id)));
+DROP POLICY IF EXISTS "Allow authenticated insert on ingredient_prices" ON ingredient_prices;
+CREATE POLICY "Allow authenticated insert on ingredient_prices"
+  ON ingredient_prices FOR INSERT
+  TO authenticated
+  WITH CHECK (true);
 
--- Shopping list
-CREATE POLICY "shopping_select" ON shopping_list_items FOR SELECT USING (is_house_member(house_id));
-CREATE POLICY "shopping_insert" ON shopping_list_items FOR INSERT WITH CHECK (is_house_member(new.house_id));
-CREATE POLICY "shopping_update" ON shopping_list_items FOR UPDATE USING (is_house_member(house_id));
-CREATE POLICY "shopping_delete" ON shopping_list_items FOR DELETE USING (is_house_member(house_id));
+-- Grant execute on RPC functions to authenticated users
+GRANT EXECUTE ON FUNCTION auto_generate_shopping_list(INTEGER)  TO authenticated;
+GRANT EXECUTE ON FUNCTION meal_ingredient_fractions(INTEGER)    TO authenticated;
 
--- Receipts
-CREATE POLICY "receipts_select" ON receipts FOR SELECT USING (is_house_member(house_id));
-CREATE POLICY "receipts_insert" ON receipts FOR INSERT WITH CHECK (is_house_member(new.house_id));
-CREATE POLICY "receipts_update" ON receipts FOR UPDATE USING (is_house_member(house_id));
-CREATE POLICY "receipts_delete" ON receipts FOR DELETE USING (is_house_member(house_id));
+-- ── Permissive policies for all tables (testing — tighten for production) ─────
+-- houses
+DROP POLICY IF EXISTS "auth select houses"  ON houses;
+DROP POLICY IF EXISTS "auth insert houses"  ON houses;
+CREATE POLICY "auth select houses" ON houses FOR SELECT TO authenticated USING (true);
+CREATE POLICY "auth insert houses" ON houses FOR INSERT TO authenticated WITH CHECK (true);
 
--- Allow authenticated users to read their own user record
-ALTER TABLE users ENABLE ROW LEVEL SECURITY;
-CREATE POLICY "users_select_self" ON users FOR SELECT USING (users.id = auth.uid());
-CREATE POLICY "users_insert" ON users FOR INSERT WITH CHECK (new.id = auth.uid());
-CREATE POLICY "users_update_self" ON users FOR UPDATE USING (users.id = auth.uid());
+-- meals
+DROP POLICY IF EXISTS "auth select meals"  ON meals;
+DROP POLICY IF EXISTS "auth insert meals"  ON meals;
+CREATE POLICY "auth select meals" ON meals FOR SELECT TO authenticated USING (true);
+CREATE POLICY "auth insert meals" ON meals FOR INSERT TO authenticated WITH CHECK (true);
+CREATE POLICY "auth update meals" ON meals FOR UPDATE TO authenticated USING (true);
 
--- IMPORTANT: After applying policies, consider testing thoroughly with a test user to ensure RLS behaves as expected.
+-- meal_ingredients
+DROP POLICY IF EXISTS "auth select meal_ingredients"  ON meal_ingredients;
+DROP POLICY IF EXISTS "auth insert meal_ingredients"  ON meal_ingredients;
+CREATE POLICY "auth select meal_ingredients" ON meal_ingredients FOR SELECT TO authenticated USING (true);
+CREATE POLICY "auth insert meal_ingredients" ON meal_ingredients FOR INSERT TO authenticated WITH CHECK (true);
+
+-- stores
+DROP POLICY IF EXISTS "auth select stores"  ON stores;
+DROP POLICY IF EXISTS "auth insert stores"  ON stores;
+CREATE POLICY "auth select stores" ON stores FOR SELECT TO authenticated USING (true);
+CREATE POLICY "auth insert stores" ON stores FOR INSERT TO authenticated WITH CHECK (true);
+
+-- shopping_list_items
+DROP POLICY IF EXISTS "auth select shopping_list_items"  ON shopping_list_items;
+DROP POLICY IF EXISTS "auth insert shopping_list_items"  ON shopping_list_items;
+DROP POLICY IF EXISTS "auth update shopping_list_items"  ON shopping_list_items;
+DROP POLICY IF EXISTS "auth delete shopping_list_items"  ON shopping_list_items;
+CREATE POLICY "auth select shopping_list_items" ON shopping_list_items FOR SELECT TO authenticated USING (true);
+CREATE POLICY "auth insert shopping_list_items" ON shopping_list_items FOR INSERT TO authenticated WITH CHECK (true);
+CREATE POLICY "auth update shopping_list_items" ON shopping_list_items FOR UPDATE TO authenticated USING (true);
+CREATE POLICY "auth delete shopping_list_items" ON shopping_list_items FOR DELETE TO authenticated USING (true);
+
+-- NOTE: For proper security, replace the USING/WITH CHECK expressions above with
+-- checks such as: uploaded_by = (select id from users where auth.uid() = users.auth_uid)
+-- or: house_id IN (SELECT house_id FROM house_users WHERE user_id = <mapped user id>)
+-- Supabase provides auth.uid() (UUID) and request.jwt.claims; adapt accordingly.
 

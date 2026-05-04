@@ -1,45 +1,46 @@
-Supabase setup for LarderLedger (minimal, no always-on compute)
+Short checklist and quick commands to set up Supabase for larder_ledger
 
-This guide walks through creating a Supabase project, applying the schema, enabling RLS, and running the web demo.
+Quick checklist
+- Create a project at https://app.supabase.com
+- In Supabase → SQL editor run `supabase/schema.sql` (copy/paste or upload)
+- Run `supabase/policies.sql` to enable RLS (adjust policies for production)
+- Create a Storage bucket named `receipts` (public/private as you prefer)
+- Test upload and access with a non-admin (authenticated) user
 
-1) Create Supabase project
-- Go to https://app.supabase.com and create a new project.
-- Note the project URL and anon/public API key (Settings -> API -> Project API keys).
+Minimal commands (local, using Supabase CLI)
 
-2) Create a Storage bucket
-- In the Supabase dashboard, go to Storage -> Create a new bucket named `receipts` (public or private as you choose).
+1. Install Supabase CLI: https://supabase.com/docs/guides/cli
 
-3) Apply schema
-- Open SQL Editor in Supabase and paste the contents of `supabase/schema.sql` from this repo. Run it.
-- This will create tables and triggers. Verify tables created.
+2. Login and link to project
+```
+supabase login
+supabase link --project-ref <your-project-ref>
+```
 
-4) Enable Row Level Security (RLS) and apply policies
-- In SQL Editor run the contents of `supabase/policies.sql` (or copy/paste). This enables RLS and creates example policies.
-- Important: test with a test user and ensure you can insert/select rows as expected.
+3. Apply schema via CLI (or use SQL Editor in dashboard):
+```
+supabase db remote set --url <db-connection-url>
+psql <your-db-connection-url> -f supabase/schema.sql
+```
+Or open the dashboard SQL editor and paste the contents of `supabase/schema.sql` and run it.
 
-5) Create storage policies (optional)
-- If your receipts bucket is private, create a policy to allow authenticated users to upload to `receipts` where the path starts with `${house_id}/` or similar. Example:
-  - In Storage Policies add a rule that allows uploads if request.auth.uid() is set.
+4. Run policies (SQL editor or psql):
+```
+psql <your-db-connection-url> -f supabase/policies.sql
+```
 
-6) Demo: host the static demo file
-- You can host `web/supabase-demo.html` on Cloudflare Pages, Netlify, or S3 + CloudFront.
-- Edit the top of the HTML to set `SUPABASE_URL` and `SUPABASE_KEY` to your project values (or paste them into the fields shown in the page at runtime).
+5. Create Storage bucket:
+ - Dashboard → Storage → New bucket
+ - Name: receipts
+ - Set public/private according to your needs
 
-7) Test flow
-- Open the demo page, sign up with an email/password, create a house, create ingredients, toggle has_any and upload a receipt file. Changes are saved immediately to Supabase.
-- Other users will see changes when they refresh or navigate (since we are not using realtime subscriptions in this demo).
+6. Test with a non-admin user:
+ - Create an account (or invite) in Supabase Auth
+ - Sign in as that user in your frontend and attempt to insert a receipt row or upload to the `receipts` bucket
 
-8) Next steps / production
-- Add RLS policies hardening as needed (restrict who can create houses, add roles).
-- Consider using Supabase Edge Functions for any server-side processing (OCR orchestration or heavy aggregation) triggered by storage events.
-- For a production static site, use Cloudflare Pages for free hosting and point to your custom domain.
-
-Security notes
-- Never embed service_role keys in client-side JS. Use anon/public keys for client access with RLS enabled.
-- Test RLS thoroughly with multiple test users to ensure no cross-house leakage.
-
-If you want, I can now:
-- Wire a Supabase Edge Function stub for receipt parsing and show how to trigger it after uploads, or
-- Add minimal GitHub Actions to deploy the static site to Cloudflare Pages automatically when `main` is updated.
-
+Notes and next steps
+- The provided `policies.sql` is permissive to make initial testing simple. For production you must:
+  - Map the auth user (auth.uid()) to your integer `users.id` in the DB (store auth UID in users table)
+  - Restrict policies using checks on `uploaded_by` or `house_id` membership via `house_users`
+  - Consider signed URLs or server-side function when uploading private files to Storage
 
