@@ -1,3 +1,5 @@
+import logger from './logger.js'
+
 /**
  * ai.js — Abstraction layer for receipt price extraction.
  *
@@ -21,6 +23,21 @@ Return ONLY a JSON array, no explanation. Each element must have:
   { "description": "product name", "price": 1.99, "unit": "500g" }
 If unit/size is not on the receipt, use an empty string for unit.
 Prices must be numbers (no currency symbols).`
+
+/** Parse a structured error from any provider response */
+function parseUpstreamError(providerName, status, rawText) {
+  let detail = rawText
+  try {
+    const j = JSON.parse(rawText)
+    // Our proxy format: { error: { code, message, detail } }
+    if (j?.error?.message) detail = j.error.message
+    // OpenAI/Anthropic format: { error: { message } }
+    else if (typeof j?.error === 'string') detail = j.error
+  } catch (_) { /* keep raw text */ }
+  const msg = `${providerName} error ${status}: ${detail}`
+  logger.error('upstream error', { provider: providerName, status, detail })
+  return new Error(msg)
+}
 
 // ── OpenAI ────────────────────────────────────────────────────────────────────
 async function extractOpenAI({ content, contentType, imageMime, apiKey }) {
@@ -46,7 +63,7 @@ async function extractOpenAI({ content, contentType, imageMime, apiKey }) {
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
     body: JSON.stringify(body),
   })
-  if (!resp.ok) throw new Error(`OpenAI error ${resp.status}: ${await resp.text()}`)
+  if (!resp.ok) throw parseUpstreamError('OpenAI', resp.status, await resp.text())
   const data = await resp.json()
   const raw = data.choices[0].message.content.trim()
   return parseJsonResponse(raw)
@@ -80,7 +97,7 @@ async function extractAnthropic({ content, contentType, imageMime, apiKey }) {
     },
     body: JSON.stringify(body),
   })
-  if (!resp.ok) throw new Error(`Anthropic error ${resp.status}: ${await resp.text()}`)
+  if (!resp.ok) throw parseUpstreamError('Anthropic', resp.status, await resp.text())
   const data = await resp.json()
   const raw = data.content[0].text.trim()
   return parseJsonResponse(raw)
@@ -113,7 +130,7 @@ async function extractCopilot({ content, contentType, sessionToken }) {
     },
     body: JSON.stringify(body),
   })
-  if (!resp.ok) throw new Error(`Copilot proxy error ${resp.status}: ${await resp.text()}`)
+  if (!resp.ok) throw parseUpstreamError('Copilot proxy', resp.status, await resp.text())
   const data = await resp.json()
   const raw = data.choices[0].message.content.trim()
   return parseJsonResponse(raw)
@@ -169,6 +186,14 @@ export async function extractPrices({ provider, apiKey, sessionToken, content, c
   const p = PROVIDERS[provider]
   if (!p) throw new Error(`Unknown AI provider: ${provider}`)
   if (contentType === 'image' && !p.supportsImage) throw new Error(`${p.name} does not support image input`)
-  return p.extract({ content, contentType, imageMime, apiKey, sessionToken })
+  logger.info('extractPrices', { provider, contentType, contentLength: content?.length })
+  try {
+    const result = await p.extract({ content, contentType, imageMime, apiKey, sessionToken })
+    logger.info('extractPrices ok', { provider, resultCount: result.length })
+    return result
+  } catch (err) {
+    logger.error('extractPrices failed', { provider, err: err.message })
+    throw err
+  }
 }
 

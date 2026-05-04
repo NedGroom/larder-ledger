@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import { supabase } from '../lib/supabase.js'
 import { useApp } from '../App.jsx'
 import { PROVIDERS, extractPrices } from '../lib/ai.js'
+import logger from '../lib/logger.js'
 
 const PROVIDER_KEYS = Object.keys(PROVIDERS)
 const LS_PROVIDER = 'll_ai_provider'
@@ -198,6 +199,8 @@ export default function Receipts() {
   const [extracting, setExtracting] = useState(false)
   const [candidates, setCandidates] = useState(null)
   const [extractErr, setExtractErr] = useState('')
+  const [extractErrDetail, setExtractErrDetail] = useState(null)
+  const [showErrDetail, setShowErrDetail] = useState(false)
 
   const fileRef = useRef()
   const currentProvider = PROVIDERS[provider]
@@ -227,7 +230,7 @@ export default function Receipts() {
   }
 
   async function runExtraction() {
-    setExtractErr(''); setCandidates(null)
+    setExtractErr(''); setExtractErrDetail(null); setShowErrDetail(false); setCandidates(null)
     if (currentProvider?.requiresApiKey && !apiKey) { setExtractErr('Enter an API key above'); return }
     if (inputMode === 'image' && !imageFile) { setExtractErr('Select an image first'); return }
     if (inputMode === 'text' && !plainText.trim()) { setExtractErr('Paste some receipt text first'); return }
@@ -248,6 +251,8 @@ export default function Receipts() {
       setCandidates(result)
     } catch (e) {
       setExtractErr(e.message)
+      // Attach recent log entries as debug detail
+      setExtractErrDetail(logger.errors().slice(-5))
     }
     setExtracting(false)
   }
@@ -350,7 +355,21 @@ export default function Receipts() {
         </label>
       )}
 
-      {extractErr && <p className="msg err">{extractErr}</p>}
+      {extractErr && (
+        <div className="extract-err-block">
+          <p className="msg err">{extractErr}</p>
+          {extractErrDetail?.length > 0 && (
+            <button className="err-detail-toggle" onClick={() => setShowErrDetail(v => !v)}>
+              {showErrDetail ? '▲ hide detail' : '▼ show detail'}
+            </button>
+          )}
+          {showErrDetail && (
+            <pre className="err-detail-pre">
+              {extractErrDetail.map((e, i) => JSON.stringify(e, null, 2)).join('\n\n')}
+            </pre>
+          )}
+        </div>
+      )}
 
       <button className="btn" onClick={runExtraction} disabled={extracting} style={{ marginTop: '.5rem' }}>
         {extracting ? <><span className="spinner" /> Extracting…</> : '✨ Extract prices with AI'}
@@ -389,4 +408,5 @@ export default function Receipts() {
     </>
   )
 }
+
 
