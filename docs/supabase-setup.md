@@ -1,46 +1,105 @@
-Short checklist and quick commands to set up Supabase for larder_ledger
+# Supabase Setup — LarderLedger
 
-Quick checklist
-- Create a project at https://app.supabase.com
-- In Supabase → SQL editor run `supabase/schema.sql` (copy/paste or upload)
-- Run `supabase/policies.sql` to enable RLS (adjust policies for production)
-- Create a Storage bucket named `receipts` (public/private as you prefer)
-- Test upload and access with a non-admin (authenticated) user
+## Prerequisites
 
-Minimal commands (local, using Supabase CLI)
-
-1. Install Supabase CLI: https://supabase.com/docs/guides/cli
-
-2. Login and link to project
+Install the Supabase CLI:
+```bash
+brew install supabase/tap/supabase   # macOS
 ```
+
+## First-time setup from scratch
+
+### 1. Create a Supabase project
+
+Go to https://supabase.com, create a new project, and note your **project ref** (the ID in the URL).
+
+### 2. Link the CLI to your project
+
+```bash
 supabase login
 supabase link --project-ref <your-project-ref>
 ```
 
-3. Apply schema via CLI (or use SQL Editor in dashboard):
-```
-supabase db remote set --url <db-connection-url>
-psql <your-db-connection-url> -f supabase/schema.sql
-```
-Or open the dashboard SQL editor and paste the contents of `supabase/schema.sql` and run it.
+### 3. Apply migrations (schema changes)
 
-4. Run policies (SQL editor or psql):
-```
-psql <your-db-connection-url> -f supabase/policies.sql
+```bash
+echo "y" | supabase db push
 ```
 
-5. Create Storage bucket:
- - Dashboard → Storage → New bucket
- - Name: receipts
- - Set public/private according to your needs
+Migrations live in `supabase/migrations/` and are applied in order. `schema.sql` is a reference only — do not run it directly on an existing DB.
 
-6. Test with a non-admin user:
- - Create an account (or invite) in Supabase Auth
- - Sign in as that user in your frontend and attempt to insert a receipt row or upload to the `receipts` bucket
+### 4. Apply RLS policies
 
-Notes and next steps
-- The provided `policies.sql` is permissive to make initial testing simple. For production you must:
-  - Map the auth user (auth.uid()) to your integer `users.id` in the DB (store auth UID in users table)
-  - Restrict policies using checks on `uploaded_by` or `house_id` membership via `house_users`
-  - Consider signed URLs or server-side function when uploading private files to Storage
+Policies use `auth.uid()` which requires a real user context — they must be applied via `db query`, not `db push`:
 
+```bash
+supabase db query --linked -f supabase/policies.sql
+```
+
+Re-run this any time you change `policies.sql`.
+
+### 5. Apply RPC functions
+
+```bash
+supabase db query --linked -f supabase/functions.sql
+```
+
+### 6. Set the frontend env vars
+
+Copy `web/.env.example` to `web/.env` and fill in your project URL and anon key (both visible in Supabase → Settings → API).
+
+---
+
+## Day-to-day database commands
+
+```bash
+# Check what migrations are pending
+supabase db push --dry-run
+
+# Apply pending migrations
+echo "y" | supabase db push
+
+# Re-apply policies after any change
+supabase db query --linked -f supabase/policies.sql
+
+# Re-apply functions after any change
+supabase db query --linked -f supabase/functions.sql
+
+# Run an ad-hoc query
+supabase db query --linked "SELECT * FROM houses;"
+```
+
+## Adding a new migration
+
+```bash
+supabase migration new <descriptive-name>
+# edit the generated file in supabase/migrations/
+echo "y" | supabase db push
+```
+
+---
+
+## Auth model
+
+- Sign-in is handled by Supabase Auth (email + password)
+- On first login, the app upserts a row into `public.users` keyed on `auth_uid` (the Supabase UUID)
+- It then looks up or creates a `house_users` membership row linking the integer `users.id` to a `houses` row
+- RLS policies use `is_house_member(house_id)` which joins `house_users → users` and checks `users.auth_uid = auth.uid()`
+
+## RLS policy design
+
+All tables are protected. The key helper function:
+
+```sql
+CREATE OR REPLACE FUNCTION is_house_member(p_house_id BIGINT)
+RETURNS BOOLEAN LANGUAGE sql STABLE SECURITY DEFINER AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM house_users hu
+    JOIN users u ON u.id = hu.user_id
+    WHERE hu.house_id = p_house_id AND u.auth_uid = auth.uid()
+  );
+$$;
+```
+
+Tables with a direct `house_id` column use `is_house_member(house_id)` directly.
+Join tables (`meal_ingredients`, `ingredient_prices`) look up the parent's `house_id` via a subquery.

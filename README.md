@@ -1,58 +1,70 @@
-LarderLedger — FastAPI starter
+# LarderLedger
 
-What is included
-- Minimal FastAPI app skeleton in `app/`
-- SQLAlchemy models matching the TDD core schema
-- DB helper `app/db.py` that defaults to sqlite for quick local testing
-- Basic endpoints: create/list houses and create/list ingredients
-- `docker-compose.yml` for a local Postgres service
-- `requirements.txt` with the main dependencies
-- Alembic config skeleton for migrations
+A household pantry, meal planning, and price comparison app built with React + Supabase.
 
-Quickstart (local, sqlite)
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-# create sqlite DB and start server
-uvicorn app.main:app --reload --port 8000
-# browse http://127.0.0.1:8000/docs
+**Live app:** https://nedgroom.github.io/larder-ledger/
+
+## What it does
+
+- **Pantry** — track which ingredients you have in stock (has_any toggle)
+- **Meals** — register recipes with their ingredients; plan meals on a date
+- **Calendar** — monthly view of planned meals
+- **Stores** — record per-store prices for ingredients with package size and per-unit cost
+- **Shopping list** — auto-generate from missing pantry items; tag items to a meal; check off as you shop
+- **Receipts** — upload a receipt photo or paste text; AI extracts prices for you to confirm
+
+## Stack
+
+| Layer | Technology |
+|-------|-----------|
+| Frontend | React 18, Vite, deployed to GitHub Pages |
+| Database + Auth | Supabase (Postgres + Auth) |
+| RLS | Per-house row-level security via `users.auth_uid` |
+
+## Repo structure
+
+```
+web/          React frontend (Vite)
+supabase/
+  schema.sql      Reference schema (do not run directly — use migrations)
+  migrations/     Supabase CLI migration files
+  policies.sql    RLS policies (apply via: supabase db query --linked -f supabase/policies.sql)
+  functions.sql   Postgres RPC functions (auto-generate shopping list, meal fractions)
+docs/             PRD, TDD, setup guides
+.github/workflows/  GitHub Actions — deploys web/ to GitHub Pages on push to main
 ```
 
-Quickstart (with local Postgres, docker)
-```bash
-# start postgres
-docker-compose up -d
-# set DATABASE_URL env var to: postgresql+psycopg2://larder:larder@localhost:5432/larder_dev
-export DATABASE_URL="postgresql+psycopg2://larder:larder@localhost:5432/larder_dev"
-uvicorn app.main:app --reload --port 8000
-```
-
-Alembic
-- A minimal alembic.ini and env.py are provided; run `alembic revision --autogenerate -m "init"` to create migration scripts.
-
-WebSocket test client
-- A simple test client is available at `scripts/test_ws_client.py`. Run it after starting the server:
+## Local development
 
 ```bash
-python scripts/test_ws_client.py --house 1
+cd web
+npm install
+npm run dev        # http://localhost:5173/larder-ledger/
 ```
 
-Quick API smoke tests
-- Run the shell script `scripts/quick_test.sh` to exercise common flows (create house, ingredient, store, price, shopping list). Ensure `jq` is installed for pretty output.
+The app talks directly to the live Supabase project — no local backend needed.
+Copy `.env.example` to `.env` if you need to override the Supabase URL/key.
+
+## Deploying
+
+Push to `main` — GitHub Actions builds `web/` and deploys to GitHub Pages automatically.
+
+## Database
+
+Migrations are managed with the Supabase CLI.
 
 ```bash
-chmod +x scripts/quick_test.sh
-./scripts/quick_test.sh
+# Link to the project (one-time)
+supabase link --project-ref uqadardaukfbrewbuhgk
+
+# Apply pending migrations
+echo "y" | supabase db push
+
+# Apply RLS policies (policies use auth.uid() so must go via db query, not db push)
+supabase db query --linked -f supabase/policies.sql
+
+# Apply RPC functions
+supabase db query --linked -f supabase/functions.sql
 ```
 
-Supabase migration & demo
-- A Supabase SQL schema and example RLS policies are provided in `supabase/schema.sql` and `supabase/policies.sql`.
-- A minimal static demo that uses Supabase JS to sign in, CRUD ingredients and upload receipts is at `web/supabase-demo.html`.
-- Setup instructions are in `docs/supabase-setup.md`.
-
-Next steps I can implement
-- Alembic migrations and an initial migration file.
-- Additional CRUD endpoints and WebSocket realtime scaffolding.
-- React PWA skeleton.
-
+See `docs/supabase-setup.md` for full setup from scratch.
