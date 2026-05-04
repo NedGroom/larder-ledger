@@ -5,3 +5,5 @@ uvicorn.log
 uvicorn.pid
 __pycache__/
 *.pyc
+.agents/
+skills-lock.json
