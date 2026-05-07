@@ -4,7 +4,7 @@
 
 **[→ Open the app](https://nedgroom.github.io/larder-ledger/)**
 
----
+---g
 
 ## The problem
 

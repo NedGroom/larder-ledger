@@ -900,10 +900,8 @@ export default function Receipts() {
           />
         </>
       )}
-      )}
     </>
+  )}
+</>
   )
-}  )
 }
-
-
