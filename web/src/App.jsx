@@ -26,11 +26,34 @@ const TABS = [
   { id: 'receipts', label: '📷 Import Receipt' },
 ]
 
+// ── Persistent receipt-session state (survives tab switches) ─────────────────
+// imageFile is intentionally excluded — File objects can't be serialised.
+export const defaultReceiptSession = {
+  provider:       null,
+  plainText:      '',
+  candidates:     null,
+  storeId:        '',
+  extractErr:     '',
+  inputMode:      'text',
+  stores:         [],
+  ingredients:    [],
+  houseMembers:   [],
+  storesLoaded:   false,
+  // AI-extracted receipt-level data
+  aiFees:         [],    // [{ description, amount }]
+  aiDiscounts:    [],    // [{ description, amount }]
+  aiReceiptTotal: null,  // number | null
+  // Settlement flow
+  savedItems:     [],    // rows that have been saved (for settlement)
+  showSettlement: false,
+}
+
 export default function App() {
   const [session, setSession] = useState(undefined)
   const [house, setHouse] = useState(null)
   const [userRow, setUserRow] = useState(null)
   const [tab, setTab] = useState('pantry')
+  const [receiptSession, setReceiptSession] = useState(defaultReceiptSession)
 
   useEffect(() => { loadTheme() }, [])
 
@@ -83,7 +106,7 @@ export default function App() {
   // No house yet — show picker
   if (!house) return <HousePicker userRow={userRow} onJoined={h => setHouse(h)} />
 
-  const ctx = { session, house, setHouse, userRow, tab, setTab }
+  const ctx = { session, house, setHouse, userRow, tab, setTab, receiptSession, setReceiptSession }
 
   return (
     <AppContext.Provider value={ctx}>
