@@ -1,4 +1,4 @@
-# 🥫 LarderLedger
+# 🏡 LarderLedger
 
 ### Stop throwing away food. Stop overpaying at the shops. Stop forgetting what's in the cupboard.
 

@@ -1,17 +1,17 @@
-import { useApp } from '../App.jsx'
-import { supabase } from '../lib/supabase.js'
+import { useApp } from '../App.jsx';
+import { supabase } from '../lib/supabase.js';
 
 export default function Layout({ tabs, activeTab, onTabChange, children }) {
-  const { house } = useApp()
+  const { house } = useApp();
 
   async function signOut() {
-    await supabase.auth.signOut()
+    await supabase.auth.signOut();
   }
 
   return (
     <>
       <header>
-        <span style={{ fontSize: '1.3rem' }}>🥫</span>
+        <span style={{ fontSize: '1.3rem' }}>🏡</span>
         <h1>LarderLedger</h1>
         <div className="header-right">
           <span className="house-name">{house?.name}</span>
@@ -20,12 +20,16 @@ export default function Layout({ tabs, activeTab, onTabChange, children }) {
             title="Settings"
             onClick={() => onTabChange('settings')}
             aria-label="Settings"
-          >⚙️</button>
-          <button className="signout-btn" onClick={signOut}>Sign out</button>
+          >
+            ⚙️
+          </button>
+          <button className="signout-btn" onClick={signOut}>
+            Sign out
+          </button>
         </div>
       </header>
       <nav>
-        {tabs.map(t => (
+        {tabs.map((t) => (
           <button
             key={t.id}
             className={activeTab === t.id ? 'active' : ''}
@@ -37,6 +41,5 @@ export default function Layout({ tabs, activeTab, onTabChange, children }) {
       </nav>
       <div className="page">{children}</div>
     </>
-  )
+  );
 }
-
