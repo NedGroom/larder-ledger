@@ -35,8 +35,19 @@ const SOURCES           = (process.env.LOG_SOURCES || 'edge_logs,postgres_logs,a
 const STORAGE_BUCKET    = 'logs'
 const DRY_RUN           = process.env.DRY_RUN === '1'
 
-if (!ACCESS_TOKEN)     { console.error('❌  SUPABASE_ACCESS_TOKEN is required'); process.exit(1) }
-if (!SERVICE_ROLE_KEY) { console.error('❌  SUPABASE_SERVICE_ROLE_KEY is required'); process.exit(1) }
+// If the required secrets aren't configured (e.g. SUPABASE_ACCESS_TOKEN /
+// SUPABASE_SERVICE_ROLE_KEY missing as GitHub Actions repo secrets), skip
+// cleanly rather than failing the job. This log drain is best-effort
+// observability — a missing secret must never spam failure notifications.
+if (!ACCESS_TOKEN || !SERVICE_ROLE_KEY) {
+  const missing = [
+    !ACCESS_TOKEN && 'SUPABASE_ACCESS_TOKEN',
+    !SERVICE_ROLE_KEY && 'SUPABASE_SERVICE_ROLE_KEY',
+  ].filter(Boolean).join(', ')
+  console.warn(`⏭️  Log drain skipped — missing secret(s): ${missing}.`)
+  console.warn('   Set them in repo Settings → Secrets and variables → Actions to enable the drain.')
+  process.exit(0)
+}
 
 const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY)
 
