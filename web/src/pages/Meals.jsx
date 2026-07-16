@@ -239,15 +239,28 @@ function PlanModal({ meal, houseId, onClose, onSaved }) {
       .eq('id', meal.id)
     if (planErr) { setErr(planErr.message); setSaving(false); return }
 
-    // 2. Add checked ingredients to shopping list tagged with meal_id
+    // 2. Add checked ingredients to the current shopping list (create one if
+    //    none is open), tagged with this meal.
     const toAdd = ingredients.filter(i => checked[i.ingredient_id])
     if (toAdd.length) {
+      // find the open (building/shopping) list, or start one
+      let { data: list } = await supabase.from('shopping_lists')
+        .select('id').eq('house_id', houseId).in('status', ['building', 'shopping'])
+        .order('created_at', { ascending: false }).limit(1).maybeSingle()
+      if (!list) {
+        const { data: created, error: listErr } = await supabase.from('shopping_lists')
+          .insert({ house_id: houseId, status: 'shopping' }).select('id').single()
+        if (listErr) { setErr(listErr.message); setSaving(false); return }
+        list = created
+      }
       const rows = toAdd.map(i => ({
         house_id: houseId,
+        list_id: list.id,
         ingredient_id: i.ingredient_id,
+        quantity: i.required_quantity ? Math.max(1, Math.round(i.required_quantity)) : 1,
         auto_generated: false,
         meal_id: meal.id,
-        completed: false,
+        bought: false,
       }))
       const { error: shopErr } = await supabase.from('shopping_list_items').insert(rows)
       if (shopErr) { setErr(shopErr.message); setSaving(false); return }

@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../lib/supabase.js'
 import { useApp } from '../App.jsx'
+import Receipts from './Receipts.jsx'
 
 export default function Stores() {
   const { house } = useApp()
@@ -106,6 +107,15 @@ export default function Stores() {
 
   return (
     <>
+      <details className="receipt-panel">
+        <summary>📷 Scan a receipt</summary>
+        <div style={{ paddingTop: '.5rem' }}>
+          <Receipts />
+        </div>
+      </details>
+
+      <hr className="divider" />
+
       <h2>Add store</h2>
       <form onSubmit={addStore}>
         <label>

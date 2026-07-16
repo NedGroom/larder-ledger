@@ -586,3 +586,34 @@ hr.divider { border: none; border-top: 1px solid #ebebeb; margin: 1rem 0; }
 .theme-swatch:hover { transform: scale(1.1); }
 .theme-swatch.active { border-color: #1a1a1a; }
 .theme-check { color: white; font-size: .85rem; font-weight: 700; line-height: 1; }
+
+/* ── Shopping loop (Build / Shop / History) ─────────────────────────────── */
+.shop-nav { display: flex; gap: .3rem; align-items: center; margin: 0 0 .8rem; flex-wrap: wrap; }
+.shop-nav-lbl { font-size: .68rem; text-transform: uppercase; letter-spacing: .1em; color: var(--color-text-muted); margin-right: .2rem; }
+.shop-nav button {
+  font: inherit; font-size: .8rem; font-weight: 600; cursor: pointer;
+  padding: .34rem .7rem; border-radius: 999px;
+  border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text-muted);
+}
+.shop-nav button.on { background: var(--color-accent); color: #fff; border-color: var(--color-accent); }
+
+.muted-note { font-size: .82rem; color: var(--color-text-muted); margin: 0 0 .6rem; }
+
+.shop-banner { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 10px; padding: 1rem; }
+.shop-banner p { margin: 0 0 .4rem; }
+
+.fbar--wide { width: 100%; height: 8px; display: block; }
+
+.qty-step { display: inline-flex; align-items: center; gap: .3rem; }
+.qty-step button {
+  width: 1.6rem; height: 1.6rem; border-radius: 6px; border: 1px solid var(--color-border);
+  background: var(--color-surface); color: var(--color-text); font: inherit; font-size: 1rem; line-height: 1; cursor: pointer;
+}
+.qty-step span { min-width: 1.1rem; text-align: center; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+.bought-inputs { display: flex; align-items: center; gap: .4rem; margin-top: .4rem; }
+.bought-inputs input { margin: 0; }
+
+.receipt-panel { border: 1px solid var(--color-border); border-radius: 10px; background: var(--color-surface); padding: .3rem .6rem; }
+.receipt-panel > summary { cursor: pointer; font-weight: 600; padding: .5rem .2rem; list-style: none; }
+.receipt-panel > summary::-webkit-details-marker { display: none; }

@@ -9,7 +9,6 @@ import Meals from './pages/Meals.jsx'
 import Calendar from './pages/Calendar.jsx'
 import Stores from './pages/Stores.jsx'
 import Shopping from './pages/Shopping.jsx'
-import Receipts from './pages/Receipts.jsx'
 import Settings from './pages/Settings.jsx'
 
 // ── App-wide context ─────────────────────────────────────────────────────────
@@ -21,9 +20,8 @@ const TABS = [
   { id: 'pantry',   label: '🧺 Larder' },
   { id: 'meals',    label: '🍲 Meals' },
   { id: 'calendar', label: '📅 Calendar' },
-  { id: 'shopping', label: '🛒 Shopping List' },
+  { id: 'shopping', label: '🛒 Shopping' },
   { id: 'stores',   label: '🏪 Shops' },
-  { id: 'receipts', label: '📷 Import Receipt' },
 ]
 
 // ── Persistent receipt-session state (survives tab switches) ─────────────────
@@ -116,7 +114,6 @@ export default function App() {
         {tab === 'calendar' && <Calendar />}
         {tab === 'stores'   && <Stores />}
         {tab === 'shopping' && <Shopping />}
-        {tab === 'receipts' && <Receipts />}
         {tab === 'settings' && <Settings />}      </Layout>
     </AppContext.Provider>
   )

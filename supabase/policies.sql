@@ -13,6 +13,7 @@ ALTER TABLE IF EXISTS ingredient_prices   ENABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS meals               ENABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS meal_ingredients    ENABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS stores              ENABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS shopping_lists      ENABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS shopping_list_items ENABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS receipts            ENABLE ROW LEVEL SECURITY;
 
@@ -69,6 +70,7 @@ CREATE POLICY "house_users: delete own"       ON house_users FOR DELETE
 CREATE POLICY "ingredients: house members"         ON ingredients         FOR ALL USING (is_house_member(house_id)) WITH CHECK (is_house_member(house_id));
 CREATE POLICY "meals: house members"               ON meals               FOR ALL USING (is_house_member(house_id)) WITH CHECK (is_house_member(house_id));
 CREATE POLICY "stores: house members"              ON stores              FOR ALL USING (is_house_member(house_id)) WITH CHECK (is_house_member(house_id));
+CREATE POLICY "shopping_lists: house members"      ON shopping_lists      FOR ALL USING (is_house_member(house_id)) WITH CHECK (is_house_member(house_id));
 CREATE POLICY "shopping_list_items: house members" ON shopping_list_items FOR ALL USING (is_house_member(house_id)) WITH CHECK (is_house_member(house_id));
 CREATE POLICY "receipts: house members"            ON receipts            FOR ALL USING (is_house_member(house_id)) WITH CHECK (is_house_member(house_id));
 

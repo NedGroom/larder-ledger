@@ -33,6 +33,7 @@ CREATE TABLE ingredients (
   canonical_unit TEXT,
   canonical_quantity NUMERIC,
   has_any BOOLEAN DEFAULT FALSE,
+  keep BOOLEAN NOT NULL DEFAULT TRUE,   -- "generally want this"; drives shopping-list build defaults
   created_by TEXT REFERENCES users(id),
   created_at TIMESTAMPTZ DEFAULT now(),
   updated_at TIMESTAMPTZ DEFAULT now()
@@ -92,19 +93,38 @@ CREATE TABLE ingredient_prices (
 CREATE INDEX idx_prices_ingredient ON ingredient_prices(ingredient_id);
 CREATE INDEX idx_prices_store ON ingredient_prices(store_id);
 
+-- A "made" shopping list with a lifecycle; done lists are the shop history.
+CREATE TABLE shopping_lists (
+  id BIGSERIAL PRIMARY KEY,
+  house_id BIGINT NOT NULL REFERENCES houses(id) ON DELETE CASCADE,
+  store_id BIGINT REFERENCES stores(id) ON DELETE SET NULL,
+  status TEXT NOT NULL DEFAULT 'building',   -- building | shopping | done
+  created_at TIMESTAMPTZ DEFAULT now(),
+  completed_at TIMESTAMPTZ,
+  total_paid NUMERIC
+);
+
+CREATE INDEX idx_shopping_lists_house ON shopping_lists(house_id, status);
+
 CREATE TABLE shopping_list_items (
   id BIGSERIAL PRIMARY KEY,
   house_id BIGINT NOT NULL REFERENCES houses(id) ON DELETE CASCADE,
-  ingredient_id BIGINT NOT NULL REFERENCES ingredients(id) ON DELETE CASCADE,
+  list_id BIGINT REFERENCES shopping_lists(id) ON DELETE CASCADE,
+  ingredient_id BIGINT REFERENCES ingredients(id) ON DELETE CASCADE,  -- nullable: one-off items
+  custom_name TEXT,                          -- name for one-off (non-Larder) items
+  quantity INTEGER NOT NULL DEFAULT 1,
+  bought BOOLEAN NOT NULL DEFAULT FALSE,
+  bought_at TIMESTAMPTZ,
+  price_paid NUMERIC,                         -- per unit
   added_by TEXT REFERENCES users(id),
-  auto_generated BOOLEAN DEFAULT TRUE,
-  completed BOOLEAN DEFAULT FALSE,
+  auto_generated BOOLEAN DEFAULT TRUE,        -- legacy, superseded by list_id/bought
+  completed BOOLEAN DEFAULT FALSE,            -- legacy, superseded by bought
   meal_id BIGINT REFERENCES meals(id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ DEFAULT now(),
   updated_at TIMESTAMPTZ DEFAULT now()
 );
 
-CREATE INDEX idx_shopping_house ON shopping_list_items(house_id, completed);
+CREATE INDEX idx_shopping_list ON shopping_list_items(list_id);
 
 CREATE TABLE receipts (
   id BIGSERIAL PRIMARY KEY,
