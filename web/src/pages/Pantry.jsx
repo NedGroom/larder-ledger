@@ -224,6 +224,7 @@ export default function Pantry() {
   const [unit, setUnit] = useState('')
   const [canonicalQty, setCanonicalQty] = useState('')
   const [hasAny, setHasAny] = useState(false)
+  const [keep, setKeep] = useState(true)
   const [msg, setMsg] = useState({ text: '', ok: true })
   const [saving, setSaving] = useState(false)
   const [search, setSearch] = useState('')
@@ -253,12 +254,13 @@ export default function Pantry() {
       canonical_unit: unit.trim() || null,
       canonical_quantity: canonicalQty ? +canonicalQty : null,
       has_any: hasAny,
+      keep,
     })
     if (error) {
       setMsg({ text: error.message, ok: false })
     } else {
       setMsg({ text: `"${name.trim()}" added`, ok: true })
-      setName(''); setUnit(''); setCanonicalQty(''); setHasAny(false)
+      setName(''); setUnit(''); setCanonicalQty(''); setHasAny(false); setKeep(true)
       await load()
     }
     setSaving(false)
@@ -271,6 +273,17 @@ export default function Pantry() {
       .eq('id', ing.id)
     if (!error) {
       setIngredients(prev => prev.map(i => i.id === ing.id ? { ...i, has_any: !ing.has_any } : i))
+    }
+  }
+
+  async function toggleKeep(ing) {
+    const next = !(ing.keep ?? true)
+    const { error } = await supabase
+      .from('ingredients')
+      .update({ keep: next })
+      .eq('id', ing.id)
+    if (!error) {
+      setIngredients(prev => prev.map(i => i.id === ing.id ? { ...i, keep: next } : i))
     }
   }
 
@@ -298,12 +311,21 @@ export default function Pantry() {
             <input type="number" min="0" step="any" value={canonicalQty} onChange={e => setCanonicalQty(e.target.value)} placeholder="100" />
           </label>
         </div>
-        <div className="toggle-wrap" style={{ marginTop: '.5rem' }}>
-          <label className="toggle">
-            <input type="checkbox" checked={hasAny} onChange={e => setHasAny(e.target.checked)} />
-            <span className="toggle-slider" />
-          </label>
-          <span>In stock</span>
+        <div className="toggle-wrap" style={{ marginTop: '.5rem', gap: '1.2rem' }}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '.4rem' }}>
+            <label className="toggle">
+              <input type="checkbox" checked={hasAny} onChange={e => setHasAny(e.target.checked)} />
+              <span className="toggle-slider" />
+            </label>
+            <span>In stock</span>
+          </span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '.4rem' }}>
+            <label className="toggle">
+              <input type="checkbox" checked={keep} onChange={e => setKeep(e.target.checked)} />
+              <span className="toggle-slider" />
+            </label>
+            <span title="Should this show up on shopping lists by default?">Keep stocked</span>
+          </span>
         </div>
         <button className="btn" type="submit" disabled={saving}>
           {saving ? <span className="spinner" /> : '+ Add'}
@@ -332,6 +354,14 @@ export default function Pantry() {
           <span className={`pill ${ing.has_any ? 'green' : 'red'}`}>
             {ing.has_any ? 'In stock' : 'Missing'}
           </span>
+          <button
+            className={`pill ${(ing.keep ?? true) ? 'blue' : 'gray'}`}
+            style={{ border: 'none', cursor: 'pointer', fontSize: '.7rem' }}
+            title="Whether this appears on shopping lists by default"
+            onClick={e => { e.stopPropagation(); toggleKeep(ing) }}
+          >
+            {(ing.keep ?? true) ? '★ Kept' : 'Not kept'}
+          </button>
           <div className="toggle-wrap" style={{ margin: 0 }} onClick={e => e.stopPropagation()}>
             <label className="toggle">
               <input
