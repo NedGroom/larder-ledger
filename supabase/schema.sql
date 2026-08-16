@@ -42,14 +42,20 @@ CREATE TABLE ingredients (
 CREATE UNIQUE INDEX ux_ingredients_house_name_normalized ON ingredients(house_id, name_normalized);
 CREATE INDEX idx_ingredients_house ON ingredients(house_id);
 
+-- Stores dishes and their variants (see parent_id). UI calls them Dishes/Variants.
 CREATE TABLE meals (
   id BIGSERIAL PRIMARY KEY,
   house_id BIGINT NOT NULL REFERENCES houses(id) ON DELETE CASCADE,
+  parent_id BIGINT REFERENCES meals(id) ON DELETE CASCADE,  -- NULL = dish; set = variant of that dish (two levels only)
   name TEXT NOT NULL,
   dish_type TEXT,
   prep_time_min INTEGER,
   servings INTEGER,
   price_per_portion NUMERIC,
+  instructions TEXT,
+  backstory TEXT,
+  photo_urls TEXT[],
+  source_links TEXT[],
   chef_user_id TEXT REFERENCES users(id),
   planned_date DATE,
   created_at TIMESTAMPTZ DEFAULT now(),
@@ -57,6 +63,7 @@ CREATE TABLE meals (
 );
 
 CREATE INDEX idx_meals_house ON meals(house_id);
+CREATE INDEX idx_meals_parent ON meals(parent_id);
 
 CREATE TABLE meal_ingredients (
   id BIGSERIAL PRIMARY KEY,

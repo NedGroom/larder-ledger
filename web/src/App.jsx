@@ -18,7 +18,7 @@ export function useApp() { return useContext(AppContext) }
 
 const TABS = [
   { id: 'pantry',   label: '🧺 Larder' },
-  { id: 'meals',    label: '🍲 Meals' },
+  { id: 'meals',    label: '🍲 Dishes' },
   { id: 'calendar', label: '📅 Calendar' },
   { id: 'shopping', label: '🛒 Shopping' },
   { id: 'stores',   label: '🏪 Shops' },

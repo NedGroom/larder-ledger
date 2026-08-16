@@ -13,7 +13,7 @@ const itemName = it => it.ingredients?.name ?? it.custom_name ?? '—'
 
 // A single row on the Shop screen. Kept at module scope (stable identity) so its
 // price/qty inputs don't lose focus when the parent re-renders.
-function ShopRow({ item, onBought }) {
+function ShopRow({ item, onBought, onRemove }) {
   const [price, setPrice] = useState(item.price_paid ?? '')
   const [qty, setQty] = useState(item.quantity ?? 1)
   return (
@@ -24,6 +24,7 @@ function ShopRow({ item, onBought }) {
       {!item.bought
         ? <button className="btn small" onClick={() => onBought(item, true, price === '' ? null : +price, +qty || 1)}>Bought</button>
         : <button className="btn small secondary" onClick={() => onBought(item, false, null, item.quantity)}>Undo</button>}
+      {!item.bought && <button className="btn small secondary" title="Remove from list" onClick={() => onRemove(item)}>✕</button>}
       {!item.bought && (
         <div className="bought-inputs" style={{ flexBasis: '100%' }}>
           <span className="meta">paid £</span>
@@ -46,6 +47,7 @@ export default function Shopping() {
 
   const [candidates, setCandidates] = useState([])   // ingredients with has_any=false
   const [stores, setStores] = useState([])
+  const [pricesByIng, setPricesByIng] = useState({}) // ingredient_id → { store_id: price }
   const [activeList, setActiveList] = useState(null)  // {id, store_id, status, stores?}
   const [items, setItems] = useState([])              // items of the active list
   const [history, setHistory] = useState([])
@@ -75,6 +77,25 @@ export default function Shopping() {
     for (const c of (cand ?? [])) p[c.id] = { checked: !!c.keep, qty: 1 }
     setCandidates(cand ?? [])
     setPicked(p)
+
+    // latest known price per (ingredient, store), for the build price preview
+    const candIds = (cand ?? []).map(c => c.id)
+    if (candIds.length) {
+      const { data: prices } = await supabase
+        .from('ingredient_prices')
+        .select('ingredient_id, store_id, price, noted_at')
+        .in('ingredient_id', candIds)
+        .order('noted_at', { ascending: false })
+      const map = {}
+      for (const row of (prices ?? [])) {
+        const k = row.store_id ?? '_'
+        map[row.ingredient_id] ??= {}
+        if (map[row.ingredient_id][k] == null) map[row.ingredient_id][k] = row.price // first = latest
+      }
+      setPricesByIng(map)
+    } else {
+      setPricesByIng({})
+    }
 
     if (list) {
       const { data: li } = await supabase
@@ -106,6 +127,15 @@ export default function Shopping() {
   // ── ① Build ─────────────────────────────────────────────────────────────────
   const toggle = id => setPicked(p => ({ ...p, [id]: { ...p[id], checked: !p[id]?.checked } }))
   const setQty = (id, qty) => setPicked(p => ({ ...p, [id]: { ...p[id], qty: Math.max(1, qty) } }))
+
+  // price for a candidate at the chosen shop (cheapest across shops when "Any")
+  function priceFor(ingredientId) {
+    const byStore = pricesByIng[ingredientId]
+    if (!byStore) return null
+    if (storeId) return byStore[storeId] ?? null
+    const vals = Object.values(byStore).filter(v => v != null)
+    return vals.length ? Math.min(...vals) : null
+  }
   function addOneOff() {
     const n = oneOffName.trim()
     if (!n) return
@@ -142,7 +172,8 @@ export default function Shopping() {
     if (error) { setMsg(error.message); return }
     if (bought && item.ingredient_id) {
       await supabase.from('ingredients').update({ has_any: true }).eq('id', item.ingredient_id)
-      if (price != null && !isNaN(price)) {
+      // only log a price on the transition into "bought" (avoid dup rows on re-toggles)
+      if (!item.bought && price != null && !isNaN(price)) {
         await supabase.from('ingredient_prices').insert({
           ingredient_id: item.ingredient_id,
           store_id: activeList?.store_id ?? null,
@@ -161,6 +192,11 @@ export default function Shopping() {
       .select('*, ingredients(name), meals(name)').single()
     if (data) setItems(prev => [...prev, data])
     setAddName('')
+  }
+
+  async function removeItem(item) {
+    await supabase.from('shopping_list_items').delete().eq('id', item.id)
+    setItems(prev => prev.filter(i => i.id !== item.id))
   }
 
   async function finishShop() {
@@ -224,6 +260,7 @@ export default function Shopping() {
         <div style={{ marginTop: '.6rem' }}>
           {candidates.map(c => {
             const sel = picked[c.id] ?? {}
+            const price = priceFor(c.id)
             return (
               <div key={c.id} className="card" style={{ opacity: sel.checked ? 1 : .55 }}>
                 <input type="checkbox" checked={!!sel.checked} onChange={() => toggle(c.id)} aria-label={`Include ${c.name}`} />
@@ -236,6 +273,9 @@ export default function Shopping() {
                     <button type="button" onClick={() => setQty(c.id, (sel.qty ?? 1) + 1)} aria-label="More">+</button>
                   </span>
                 )}
+                <span className="meta" style={{ minWidth: 48, textAlign: 'right' }}>
+                  {price != null ? `£${(price * (sel.checked ? (sel.qty ?? 1) : 1)).toFixed(2)}` : '—'}
+                </span>
               </div>
             )
           })}
@@ -258,8 +298,20 @@ export default function Shopping() {
           <button className="btn small" type="button" style={{ marginTop: 22 }} onClick={addOneOff}>Add</button>
         </div>
 
+        {(() => {
+          const est = candidates.filter(c => picked[c.id]?.checked)
+            .reduce((t, c) => { const p = priceFor(c.id); return p != null ? t + p * (picked[c.id].qty ?? 1) : t }, 0)
+          const anyPriced = candidates.some(c => picked[c.id]?.checked && priceFor(c.id) != null)
+          return anyPriced ? (
+            <p className="muted-note" style={{ marginTop: '.6rem' }}>
+              Estimated at {storeId ? stores.find(s => String(s.id) === storeId)?.name : 'the cheapest shop'}: <strong>£{est.toFixed(2)}</strong>
+              {' '}(items without a recorded price aren't counted)
+            </p>
+          ) : null
+        })()}
+
         {msg && <p className="msg err">{msg}</p>}
-        <button className="btn" style={{ marginTop: '.7rem' }} onClick={startShop} disabled={busy || chosenCount === 0}>
+        <button className="btn" style={{ marginTop: '.4rem' }} onClick={startShop} disabled={busy || chosenCount === 0}>
           {busy ? <span className="spinner" /> : `Start shop → (${chosenCount})`}
         </button>
       </>
@@ -289,7 +341,7 @@ export default function Shopping() {
           Or record the whole shop from a receipt in the <strong>Shops</strong> tab.
         </p>
 
-        {items.map(item => <ShopRow key={item.id} item={item} onBought={markBought} />)}
+        {items.map(item => <ShopRow key={item.id} item={item} onBought={markBought} onRemove={removeItem} />)}
 
         <div className="field-row" style={{ marginTop: '.5rem' }}>
           <label style={{ flex: 1 }}>Forgot something? Add it
