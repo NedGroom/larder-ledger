@@ -60,6 +60,9 @@ cd web && npm install          # first time
 cd web && npm run dev          # http://localhost:5173/larder-ledger/
 cd web && npm run build        # production build → dist/
 
+# Browser tests — drive the real UI against a fake Supabase. See web/test/README.md
+cd web && npm i --no-save playwright && node test/larder-and-shop.test.mjs
+
 echo "y" | supabase db push                                   # apply migrations
 supabase db query --linked -f supabase/policies.sql           # apply RLS
 supabase db query --linked -f supabase/functions.sql          # apply RPCs
@@ -70,6 +73,9 @@ supabase db query --linked "SELECT * FROM houses;"            # ad-hoc query
 
 - **DB changes go through `supabase/migrations/`**, never by editing
   `schema.sql` (which is a read-only reference) or the live DB by hand.
+- **Apply migrations before merging to `main`.** Pushing to `main` deploys the
+  frontend immediately, so a merge that lands ahead of its migration leaves the
+  live app querying tables that don't exist yet.
 - After changing `policies.sql` or `functions.sql`, re-apply them with the
   commands above — they are not part of the migration stream.
 - The anon key in `web/.env` is public and safe to commit (RLS restricts it).
