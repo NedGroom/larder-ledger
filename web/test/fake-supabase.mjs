@@ -22,6 +22,13 @@ export function makeDb(overrides = {}) {
     meal_ingredients: [],
     shopping_lists: [],
     shopping_list_items: [],
+    periods: [],
+    ingredient_targets: [],
+    cooks: [],
+    cook_components: [],
+    cook_component_ingredients: [],
+    meal_categories: [],
+    allocations: [],
     ...overrides,
   }
 }
@@ -71,13 +78,21 @@ export async function installRoutes(page, db) {
     const embed = r => {
       const out = { ...r }
       if (select.includes('ingredients(') && r.ingredient_id != null) {
-        out.ingredients = { name: db.ingredients.find(i => i.id === r.ingredient_id)?.name }
+        // The whole row: returning only `name` silently made every other
+        // embedded field read as undefined, which is a trap, not a shortcut.
+        out.ingredients = db.ingredients.find(i => i.id === r.ingredient_id) ?? null
       }
       if (select.includes('meals(')) out.meals = null
       if (select.includes('stores(')) {
         out.stores = r.store_id ? { name: db.stores.find(s => s.id === r.store_id)?.name } : null
       }
       if (select.includes('users(')) out.users = db.users[0]
+      if (select.includes('cooks(') && r.cook_id != null) {
+        out.cooks = db.cooks.find(c => c.id === r.cook_id) ?? null
+      }
+      if (select.includes('cook_component_ingredients(')) {
+        out.cook_component_ingredients = db.cook_component_ingredients.filter(l => l.component_id === r.id)
+      }
       if (select.includes('shopping_list_items(count)')) {
         out.shopping_list_items = [{ count: db.shopping_list_items.filter(i => i.list_id === r.id).length }]
       }

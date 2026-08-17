@@ -17,6 +17,10 @@ CREATE TABLE users (
   email TEXT,
   name TEXT,
   hashed_password TEXT,
+  -- Personal daily targets: per person, unrelated to ingredient card targets.
+  target_kcal NUMERIC,
+  target_protein_g NUMERIC,
+  target_fibre_g NUMERIC,
   created_at TIMESTAMPTZ DEFAULT now()
 );
 
@@ -36,6 +40,16 @@ CREATE TABLE ingredients (
   canonical_quantity NUMERIC,
   has_any BOOLEAN DEFAULT FALSE,
   keep BOOLEAN NOT NULL DEFAULT TRUE,   -- "generally want this"; drives shopping-list build defaults
+  stock_qty NUMERIC,                    -- optional detail beside has_any
+  stock_unit TEXT,
+  card_weight NUMERIC,                  -- g/ml one deck card of this is worth
+  qualitative_note TEXT,                -- "1 handful ~ 30g", the user's own reference
+  -- Nutrients per 100g/ml. NULL means "not looked up", never zero.
+  kcal_per_100 NUMERIC,
+  protein_per_100 NUMERIC,
+  fibre_per_100 NUMERIC,
+  carbs_per_100 NUMERIC,
+  fat_per_100 NUMERIC,
   created_by BIGINT REFERENCES users(id),
   created_at TIMESTAMPTZ DEFAULT now(),
   updated_at TIMESTAMPTZ DEFAULT now()
@@ -80,7 +94,6 @@ CREATE TABLE meals (
   photo_urls TEXT[],
   source_links TEXT[],
   chef_user_id BIGINT REFERENCES users(id),
-  planned_date DATE,
   created_at TIMESTAMPTZ DEFAULT now(),
   updated_at TIMESTAMPTZ DEFAULT now()
 );
@@ -92,8 +105,16 @@ CREATE TABLE meal_ingredients (
   id BIGSERIAL PRIMARY KEY,
   meal_id BIGINT NOT NULL REFERENCES meals(id) ON DELETE CASCADE,
   ingredient_id BIGINT NOT NULL REFERENCES ingredients(id) ON DELETE CASCADE,
-  required_quantity NUMERIC,
-  required_unit TEXT
+  required_quantity NUMERIC,   -- as the recipe is written: 2 …
+  required_unit TEXT,          -- … "handfuls"
+  qty_normalised NUMERIC       -- the same amount in g/ml, for the WHOLE dish
+);
+
+-- Cuisine and similar, on dishes. A different axis from meals.dish_type.
+CREATE TABLE meal_categories (
+  meal_id     BIGINT NOT NULL REFERENCES meals(id) ON DELETE CASCADE,
+  category_id BIGINT NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
+  PRIMARY KEY (meal_id, category_id)
 );
 
 CREATE TABLE stores (
@@ -123,6 +144,97 @@ CREATE TABLE ingredient_prices (
 CREATE INDEX idx_prices_ingredient ON ingredient_prices(ingredient_id);
 CREATE INDEX idx_prices_store ON ingredient_prices(store_id);
 
+-- ── The fortnight planner ────────────────────────────────────────────────────
+-- Cards are spent by ALLOCATION, not by cooking: a period's deck is its targets
+-- minus every allocation dated inside its range, whoever cooked it. That is what
+-- lets overlapping periods both count a shared day, and what lets a batch cooked
+-- into the freezer cost nothing until a day is chosen for it.
+
+CREATE TABLE periods (
+  id BIGSERIAL PRIMARY KEY,
+  house_id BIGINT NOT NULL REFERENCES houses(id) ON DELETE CASCADE,
+  name TEXT,
+  starts_on DATE NOT NULL,
+  ends_on DATE NOT NULL,          -- periods may overlap each other
+  created_at TIMESTAMPTZ DEFAULT now(),
+  CONSTRAINT periods_dates_ordered CHECK (ends_on >= starts_on)
+);
+
+CREATE INDEX idx_periods_house ON periods(house_id, starts_on);
+
+CREATE TABLE ingredient_targets (
+  id BIGSERIAL PRIMARY KEY,
+  period_id BIGINT NOT NULL REFERENCES periods(id) ON DELETE CASCADE,
+  ingredient_id BIGINT NOT NULL REFERENCES ingredients(id) ON DELETE CASCADE,
+  target_cards NUMERIC NOT NULL DEFAULT 0,
+  UNIQUE (period_id, ingredient_id)
+);
+
+CREATE INDEX idx_ingredient_targets_period ON ingredient_targets(period_id);
+
+CREATE TABLE cooks (
+  id BIGSERIAL PRIMARY KEY,
+  house_id BIGINT NOT NULL REFERENCES houses(id) ON DELETE CASCADE,
+  period_id BIGINT REFERENCES periods(id) ON DELETE SET NULL,
+  cook_date DATE NOT NULL,
+  name TEXT,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX idx_cooks_house ON cooks(house_id, cook_date);
+CREATE INDEX idx_cooks_period ON cooks(period_id);
+
+-- One batch. Also the fridge record: not eaten and not gone = it still exists.
+CREATE TABLE cook_components (
+  id BIGSERIAL PRIMARY KEY,
+  house_id BIGINT NOT NULL REFERENCES houses(id) ON DELETE CASCADE,
+  cook_id BIGINT NOT NULL REFERENCES cooks(id) ON DELETE CASCADE,
+  meal_id BIGINT REFERENCES meals(id) ON DELETE SET NULL,
+  ingredient_id BIGINT REFERENCES ingredients(id) ON DELETE SET NULL,
+  name TEXT NOT NULL,
+  servings_planned NUMERIC NOT NULL DEFAULT 1,
+  cooked_date DATE,                     -- may differ from the session's date
+  frozen BOOLEAN NOT NULL DEFAULT FALSE,
+  eaten BOOLEAN NOT NULL DEFAULT FALSE,
+  gone BOOLEAN NOT NULL DEFAULT FALSE,  -- neutral: wasted, given away, taken out
+  gone_note TEXT,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  CONSTRAINT cook_components_servings_positive CHECK (servings_planned > 0)
+);
+
+CREATE INDEX idx_cook_components_cook ON cook_components(cook_id);
+CREATE INDEX idx_cook_components_house ON cook_components(house_id);
+
+-- Copied from the dish, never referenced, so editing a recipe cannot rewrite a
+-- cook that already happened.
+CREATE TABLE cook_component_ingredients (
+  id BIGSERIAL PRIMARY KEY,
+  component_id BIGINT NOT NULL REFERENCES cook_components(id) ON DELETE CASCADE,
+  ingredient_id BIGINT NOT NULL REFERENCES ingredients(id) ON DELETE CASCADE,
+  qty_total NUMERIC,     -- g/ml across all planned servings
+  qty_text TEXT          -- as originally typed
+);
+
+CREATE INDEX idx_cci_component ON cook_component_ingredients(component_id);
+
+CREATE TABLE allocations (
+  id BIGSERIAL PRIMARY KEY,
+  house_id BIGINT NOT NULL REFERENCES houses(id) ON DELETE CASCADE,
+  component_id BIGINT NOT NULL REFERENCES cook_components(id) ON DELETE CASCADE,
+  period_id BIGINT REFERENCES periods(id) ON DELETE SET NULL,  -- ownership only
+  on_date DATE NOT NULL,                                        -- what the deck counts
+  slot TEXT NOT NULL DEFAULT 'dinner',
+  servings NUMERIC NOT NULL DEFAULT 1,                          -- fractional allowed
+  for_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  CONSTRAINT allocations_slot_valid CHECK (slot IN ('breakfast', 'lunch', 'dinner')),
+  CONSTRAINT allocations_servings_positive CHECK (servings > 0)
+);
+
+CREATE INDEX idx_allocations_date ON allocations(house_id, on_date);
+CREATE INDEX idx_allocations_component ON allocations(component_id);
+CREATE INDEX idx_allocations_period ON allocations(period_id);
+
 -- A "made" shopping list with a lifecycle; done lists are the shop history.
 -- A receipt scanned in the Shops tab also lands here, born 'done'.
 CREATE TABLE shopping_lists (
@@ -131,6 +243,7 @@ CREATE TABLE shopping_lists (
   store_id BIGINT REFERENCES stores(id) ON DELETE SET NULL,
   status TEXT NOT NULL DEFAULT 'building',   -- building | shopping | done
   source TEXT NOT NULL DEFAULT 'manual',     -- manual | receipt
+  period_id BIGINT REFERENCES periods(id) ON DELETE SET NULL,  -- the plan it shops for
   purchased_on DATE,                          -- when the shop happened (may predate completed_at)
   receipt_total NUMERIC,                      -- total printed on the receipt, if scanned
   created_at TIMESTAMPTZ DEFAULT now(),
@@ -175,6 +288,7 @@ CREATE TABLE receipts (
   parsed BOOLEAN DEFAULT FALSE,
   created_at TIMESTAMPTZ DEFAULT now()
 );
+
 
 -- Optionally: a small function/trigger to update updated_at on change
 CREATE OR REPLACE FUNCTION trigger_set_updated_at()

@@ -6,7 +6,7 @@ import Layout from './components/Layout.jsx'
 import HousePicker from './components/HousePicker.jsx'
 import Pantry from './pages/Pantry.jsx'
 import Meals from './pages/Meals.jsx'
-import Calendar from './pages/Calendar.jsx'
+import Planner from './pages/Planner.jsx'
 import Stores from './pages/Stores.jsx'
 import Shopping from './pages/Shopping.jsx'
 import Settings from './pages/Settings.jsx'
@@ -19,7 +19,7 @@ export function useApp() { return useContext(AppContext) }
 const TABS = [
   { id: 'pantry',   label: '🧺 Larder' },
   { id: 'meals',    label: '🍲 Dishes' },
-  { id: 'calendar', label: '📅 Calendar' },
+  { id: 'calendar', label: '📅 Plan' },
   { id: 'shopping', label: '🛒 Shopping' },
   { id: 'stores',   label: '🏪 Shops' },
 ]
@@ -78,7 +78,7 @@ export default function App() {
           { auth_uid: userId, email: session.user.email, name: session.user.user_metadata?.full_name },
           { onConflict: 'auth_uid' }
         )
-        .select('id')
+        .select('id, name, email, target_kcal, target_protein_g, target_fibre_g')
         .single()
 
       if (!uRow) return
@@ -114,7 +114,7 @@ export default function App() {
       <Layout tabs={TABS} activeTab={tab} onTabChange={setTab}>
         {tab === 'pantry'   && <Pantry />}
         {tab === 'meals'    && <Meals />}
-        {tab === 'calendar' && <Calendar />}
+        {tab === 'calendar' && <Planner />}
         {tab === 'stores'   && <Stores />}
         {tab === 'shopping' && <Shopping />}
         {tab === 'settings' && <Settings />}      </Layout>

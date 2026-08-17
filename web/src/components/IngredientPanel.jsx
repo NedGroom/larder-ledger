@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase.js'
 import { calcCanonicalRate, formatRate } from '../lib/units.js'
 import { findOrCreateCategory, setIngredientCategories } from '../lib/larder.js'
+import { NUTRIENTS } from '../lib/planner.js'
 
 // ── Store comparison ──────────────────────────────────────────────────────────
 function StoreComparison({ prices }) {
@@ -199,6 +200,108 @@ export function CategoryPicker({ houseId, categories, selectedIds, onChange, onC
   )
 }
 
+// ── Planner facts ─────────────────────────────────────────────────────────────
+/**
+ * Card weight, stock detail and nutrients.
+ *
+ * Nutrients are deliberately left blank rather than zeroed: a blank means "not
+ * looked up yet" and is excluded from the analyse view, whereas a zero would
+ * quietly drag a day's totals down and look like real data.
+ */
+function PlannerFacts({ ing, onUpdated }) {
+  const [open, setOpen] = useState(false)
+  const [form, setForm] = useState({})
+  const [saving, setSaving] = useState(false)
+  const [msg, setMsg] = useState('')
+
+  useEffect(() => {
+    setForm({
+      card_weight: ing.card_weight ?? '',
+      qualitative_note: ing.qualitative_note ?? '',
+      stock_qty: ing.stock_qty ?? '',
+      stock_unit: ing.stock_unit ?? '',
+      ...Object.fromEntries(NUTRIENTS.map(n => [n.per100, ing[n.per100] ?? ''])),
+    })
+  }, [ing.id])
+
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
+
+  async function save() {
+    setSaving(true); setMsg('')
+    const patch = {
+      card_weight: form.card_weight === '' ? null : Number(form.card_weight),
+      qualitative_note: form.qualitative_note.trim() || null,
+      stock_qty: form.stock_qty === '' ? null : Number(form.stock_qty),
+      stock_unit: form.stock_unit.trim() || null,
+      ...Object.fromEntries(NUTRIENTS.map(n => [n.per100, form[n.per100] === '' ? null : Number(form[n.per100])])),
+    }
+    // Recording a quantity implies we have some; clearing it says nothing either way.
+    if (patch.stock_qty > 0) patch.has_any = true
+    const { error } = await supabase.from('ingredients').update(patch).eq('id', ing.id)
+    if (error) { setMsg('Error: ' + error.message); setSaving(false); return }
+    onUpdated({ ...ing, ...patch })
+    setMsg('Saved ✓')
+    setSaving(false)
+    setTimeout(() => setMsg(''), 2000)
+  }
+
+  return (
+    <div className="ing-panel-section">
+      <button className="ing-facts-toggle" onClick={() => setOpen(v => !v)}>
+        <span className="ing-panel-label" style={{ margin: 0 }}>Planning &amp; nutrition</span>
+        <span className="meta">
+          {ing.card_weight ? `1 card = ${ing.card_weight}g` : 'no card weight'}
+          {' · '}
+          {NUTRIENTS.filter(n => ing[n.per100] != null).length}/{NUTRIENTS.length} nutrients
+        </span>
+        <span>{open ? '▲' : '▼'}</span>
+      </button>
+
+      {open && (
+        <>
+          <p className="ing-panel-hint">
+            One card is how much of this counts as a single portion in the deck.
+            Leave a nutrient blank if you haven't looked it up — blank is treated as
+            unknown, not as zero.
+          </p>
+          <div className="field-row">
+            <label>1 card = (g/ml)
+              <input type="number" min="1" step="1" value={form.card_weight ?? ''}
+                onChange={e => set('card_weight', e.target.value)} placeholder="80" />
+            </label>
+            <label>In the house
+              <input type="number" min="0" step="any" value={form.stock_qty ?? ''}
+                onChange={e => set('stock_qty', e.target.value)} placeholder="qty" />
+            </label>
+            <label style={{ maxWidth: 90 }}>Unit
+              <input value={form.stock_unit ?? ''} onChange={e => set('stock_unit', e.target.value)} placeholder="g" />
+            </label>
+          </div>
+
+          <label>Rough measures <span className="meta">(your own reference when writing recipes)</span>
+            <input value={form.qualitative_note ?? ''} onChange={e => set('qualitative_note', e.target.value)}
+              placeholder="1 handful ≈ 30g · 1 tin ≈ 400g" />
+          </label>
+
+          <div className="nutrient-grid">
+            {NUTRIENTS.map(n => (
+              <label key={n.key}>{n.label} /100
+                <input type="number" min="0" step="any" value={form[n.per100] ?? ''}
+                  onChange={e => set(n.per100, e.target.value)} placeholder="—" />
+              </label>
+            ))}
+          </div>
+
+          <button className="btn small" onClick={save} disabled={saving}>
+            {saving ? <span className="spinner" /> : 'Save'}
+          </button>
+          {msg && <p className="msg ok" style={{ marginTop: '.3rem', fontSize: '.78rem' }}>{msg}</p>}
+        </>
+      )}
+    </div>
+  )
+}
+
 // ── Ingredient detail panel ───────────────────────────────────────────────────
 export default function IngredientPanel({ ing, houseId, categories, onClose, onUpdated, onCategoriesChanged, onCategoryDeleted }) {
   const [canonRateUnit, setCanonRateUnit] = useState(ing.canonical_rate_unit || '')
@@ -279,6 +382,9 @@ export default function IngredientPanel({ ing, houseId, categories, onClose, onU
             onCategoryDeleted={onCategoryDeleted}
           />
         </div>
+
+        {/* What the planner needs to know */}
+        <PlannerFacts ing={ing} onUpdated={onUpdated} />
 
         {/* Canonical rate unit editor */}
         <div className="ing-panel-section">

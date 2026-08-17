@@ -1,5 +1,9 @@
 import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../lib/supabase.js'
+import { suggestNormalised, todayStr, periodsCovering } from '../lib/planner.js'
+import { addComponent, allocate } from '../lib/planner-io.js'
+import { CategoryPicker } from '../components/IngredientPanel.jsx'
+import { findOrCreateCategory } from '../lib/larder.js'
 import { useApp } from '../App.jsx'
 
 // A "dish" is the primary object; a "variant" is a child dish with the same
@@ -65,7 +69,13 @@ function RecipeModal({ houseId, editing, parent, onClose, onSaved }) {
   const [backstory, setBackstory] = useState(editing?.backstory ?? '')
   const [sourceLinks, setSourceLinks] = useState(arrayToLines(editing?.source_links))
   const [photoUrls, setPhotoUrls] = useState(arrayToLines(editing?.photo_urls))
-  const [selected, setSelected] = useState({}) // ingredient_id → { checked, quantity, unit }
+  // ingredient_id → { checked, quantity, unit, normalised }
+  // `quantity`+`unit` are how the recipe is written; `normalised` is the same
+  // amount in g/ml for the whole dish, which is what the deck and the nutrient
+  // sums actually run on. Blank normalised simply counts as zero.
+  const [selected, setSelected] = useState({})
+  const [categories, setCategories] = useState([])
+  const [catIds, setCatIds] = useState([])
   const [search, setSearch] = useState('')
   const [showQuickAdd, setShowQuickAdd] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -74,20 +84,42 @@ function RecipeModal({ houseId, editing, parent, onClose, onSaved }) {
   useEffect(() => {
     supabase.from('ingredients').select('*').eq('house_id', houseId).order('name')
       .then(({ data }) => setAllIngredients(data ?? []))
+    supabase.from('categories').select('*').eq('house_id', houseId).order('name')
+      .then(({ data }) => setCategories(data ?? []))
     if (editing) {
-      supabase.from('meal_ingredients').select('ingredient_id, required_quantity, required_unit').eq('meal_id', editing.id)
+      supabase.from('meal_ingredients').select('ingredient_id, required_quantity, required_unit, qty_normalised').eq('meal_id', editing.id)
         .then(({ data }) => {
           const sel = {}
-          for (const r of (data ?? [])) sel[r.ingredient_id] = { checked: true, quantity: r.required_quantity ?? '', unit: r.required_unit ?? '' }
+          for (const r of (data ?? [])) sel[r.ingredient_id] = {
+            checked: true,
+            quantity: r.required_quantity ?? '',
+            unit: r.required_unit ?? '',
+            normalised: r.qty_normalised ?? '',
+          }
           setSelected(sel)
         })
+      supabase.from('meal_categories').select('category_id').eq('meal_id', editing.id)
+        .then(({ data }) => setCatIds((data ?? []).map(r => r.category_id)))
     }
   }, [houseId, editing])
 
   function toggleIngredient(id) {
-    setSelected(prev => ({ ...prev, [id]: prev[id] ? { ...prev[id], checked: !prev[id].checked } : { checked: true, quantity: '', unit: '' } }))
+    setSelected(prev => ({ ...prev, [id]: prev[id] ? { ...prev[id], checked: !prev[id].checked } : { checked: true, quantity: '', unit: '', normalised: '' } }))
   }
-  const setQty = (id, qty) => setSelected(prev => ({ ...prev, [id]: { ...prev[id], quantity: qty } }))
+
+  // Typing a quantity re-derives the g/ml figure where the unit allows it, but
+  // never overwrites a number the user has set by hand.
+  function setQty(id, qty) {
+    setSelected(prev => {
+      const row = prev[id] ?? { checked: true }
+      const unit = row.unit || allIngredients.find(i => i.id === id)?.canonical_unit || ''
+      const auto = suggestNormalised(qty, unit)
+      const keepManual = row._manualNorm
+      return { ...prev, [id]: { ...row, quantity: qty, normalised: keepManual ? row.normalised : (auto ?? row.normalised ?? '') } }
+    })
+  }
+  const setNorm = (id, value) =>
+    setSelected(prev => ({ ...prev, [id]: { ...prev[id], normalised: value, _manualNorm: true } }))
 
   function handleIngAdded(ing) {
     setAllIngredients(prev => [...prev, ing].sort((a, b) => a.name.localeCompare(b.name)))
@@ -127,11 +159,20 @@ function RecipeModal({ houseId, editing, parent, onClose, onSaved }) {
       meal_id: mealId, ingredient_id: +id,
       required_quantity: v.quantity ? +v.quantity : null,
       required_unit: v.unit || null,
+      qty_normalised: v.normalised === '' || v.normalised == null ? null : +v.normalised,
     }))
     if (links.length) {
       const { error: linkErr } = await supabase.from('meal_ingredients').insert(links)
       if (linkErr) { setErr(linkErr.message); setSaving(false); return }
     }
+
+    await supabase.from('meal_categories').delete().eq('meal_id', mealId)
+    if (catIds.length) {
+      const { error: catErr } = await supabase.from('meal_categories')
+        .insert(catIds.map(category_id => ({ meal_id: mealId, category_id })))
+      if (catErr) { setErr(catErr.message); setSaving(false); return }
+    }
+
     setSaving(false)
     onSaved()
   }
@@ -166,6 +207,10 @@ function RecipeModal({ houseId, editing, parent, onClose, onSaved }) {
           <h3 style={{ marginTop: '.9rem' }}>
             Ingredients {checkedCount > 0 && <span className="pill blue">{checkedCount} selected</span>}
           </h3>
+          <p className="muted-note">
+            Quantities are for the whole dish. The <strong>g/ml</strong> column is what the planner counts —
+            it fills itself in for units it understands, and you can type it for the ones it can't ("2 tins").
+          </p>
           <input type="search" placeholder="Search ingredients…" value={search} onChange={e => setSearch(e.target.value)} style={{ marginBottom: '.3rem' }} />
           <div className="ing-picker">
             {filtered.map(ing => {
@@ -178,6 +223,9 @@ function RecipeModal({ houseId, editing, parent, onClose, onSaved }) {
                     <>
                       <input type="number" placeholder="qty" value={sel.quantity ?? ''} onChange={e => setQty(ing.id, e.target.value)} min="0" step="any" />
                       <span className="ing-unit">{ing.canonical_unit ?? ''}</span>
+                      <input type="number" className="ing-norm" placeholder="g/ml"
+                        title={`Total for the whole dish, in g or ml — this is what the deck and nutrients use.${ing.qualitative_note ? ` (${ing.qualitative_note})` : ''}`}
+                        value={sel.normalised ?? ''} onChange={e => setNorm(ing.id, e.target.value)} min="0" step="any" />
                     </>
                   )}
                 </div>
@@ -189,6 +237,15 @@ function RecipeModal({ houseId, editing, parent, onClose, onSaved }) {
             {showQuickAdd ? '− Cancel new ingredient' : '+ New ingredient'}
           </button>
           {showQuickAdd && <QuickAddIngredient houseId={houseId} onAdded={handleIngAdded} />}
+
+          <h3 style={{ marginTop: '.9rem' }}>Categories <span className="meta">(cuisine, or however you group dishes)</span></h3>
+          <CategoryPicker
+            houseId={houseId}
+            categories={categories}
+            selectedIds={catIds}
+            onChange={setCatIds}
+            onCategoriesChanged={cat => setCategories(prev => prev.some(c => c.id === cat.id) ? prev : [...prev, cat].sort((a, b) => a.name.localeCompare(b.name)))}
+          />
 
           <h3 style={{ marginTop: '.9rem' }}>Method</h3>
           <textarea value={instructions} onChange={e => setInstructions(e.target.value)} placeholder="Step-by-step instructions…" rows={5} />
@@ -213,9 +270,21 @@ function RecipeModal({ houseId, editing, parent, onClose, onSaved }) {
   )
 }
 
-// ── Plan a dish/variant onto a date (adds ingredients to the shopping list) ────
+// ── Plan a dish onto a date ───────────────────────────────────────────────────
+/**
+ * The shortcut for "I want this on Thursday", without opening the planner.
+ *
+ * It does the same thing the planner does, just condensed: a cook session on
+ * the chosen day, one serving placed on it, and the rest of the batch left
+ * unallocated for you to spread later. The period is inferred from the date —
+ * with a choice offered where two of them overlap.
+ */
 function PlanModal({ meal, houseId, onClose, onSaved }) {
-  const [date, setDate] = useState(meal.planned_date ?? '')
+  const [date, setDate] = useState(todayStr())
+  const [slot, setSlot] = useState('dinner')
+  const [servings, setServings] = useState(meal.servings || 4)
+  const [periods, setPeriods] = useState([])
+  const [periodId, setPeriodId] = useState('')
   const [ingredients, setIngredients] = useState([])
   const [checked, setChecked] = useState({})
   const [saving, setSaving] = useState(false)
@@ -223,43 +292,74 @@ function PlanModal({ meal, houseId, onClose, onSaved }) {
 
   useEffect(() => {
     supabase.from('meal_ingredients')
-      .select('ingredient_id, required_quantity, required_unit, ingredients(name, has_any)')
+      .select('ingredient_id, required_quantity, required_unit, qty_normalised, ingredients(name, has_any)')
       .eq('meal_id', meal.id)
-      .then(({ data }) => setIngredients(data ?? []))
-  }, [meal.id])
+      .then(({ data }) => {
+        setIngredients(data ?? [])
+        // Default to buying whatever the house hasn't got in.
+        setChecked(Object.fromEntries((data ?? []).filter(i => !i.ingredients?.has_any).map(i => [i.ingredient_id, true])))
+      })
+    supabase.from('periods').select('*').eq('house_id', houseId).order('starts_on', { ascending: false })
+      .then(({ data }) => setPeriods(data ?? []))
+  }, [meal.id, houseId])
+
+  // Which periods cover the chosen day — usually one, sometimes two.
+  const covering = periodsCovering(periods, date)
+  useEffect(() => {
+    setPeriodId(prev => (covering.some(p => String(p.id) === prev) ? prev : String(covering[0]?.id ?? '')))
+  }, [date, periods.length])   // eslint-disable-line react-hooks/exhaustive-deps
 
   async function save(e) {
     e.preventDefault()
-    setSaving(true)
-    const { error: planErr } = await supabase.from('meals').update({ planned_date: date || null }).eq('id', meal.id)
-    if (planErr) { setErr(planErr.message); setSaving(false); return }
+    if (!date) { setErr('Pick a date'); return }
+    setSaving(true); setErr('')
+    try {
+      const period = periods.find(p => String(p.id) === periodId) ?? null
 
-    const toAdd = ingredients.filter(i => checked[i.ingredient_id])
-    if (toAdd.length) {
-      let { data: list } = await supabase.from('shopping_lists')
-        .select('id').eq('house_id', houseId).in('status', ['building', 'shopping'])
-        .order('created_at', { ascending: false }).limit(1).maybeSingle()
-      if (!list) {
-        const { data: created, error: listErr } = await supabase.from('shopping_lists')
-          .insert({
-            house_id: houseId,
-            status: 'shopping',
-            source: 'manual',
-            purchased_on: new Date().toISOString().slice(0, 10),
-          }).select('id').single()
-        if (listErr) { setErr(listErr.message); setSaving(false); return }
-        list = created
+      const { data: cook, error: cookErr } = await supabase.from('cooks')
+        .insert({ house_id: houseId, period_id: period?.id ?? null, cook_date: date })
+        .select('id').single()
+      if (cookErr) throw new Error(cookErr.message)
+
+      const component = await addComponent({
+        houseId, cookId: cook.id, meal, servings: Number(servings), mealIngredients: ingredients,
+      })
+
+      // One serving lands on the day you picked; the rest wait in the planner.
+      await allocate({
+        houseId, component, periodId: period?.id ?? null,
+        onDate: date, slot, servings: 1,
+      })
+
+      const toAdd = ingredients.filter(i => checked[i.ingredient_id])
+      if (toAdd.length) {
+        let { data: list } = await supabase.from('shopping_lists')
+          .select('id').eq('house_id', houseId).in('status', ['building', 'shopping'])
+          .order('created_at', { ascending: false }).limit(1).maybeSingle()
+        if (!list) {
+          const { data: created, error: listErr } = await supabase.from('shopping_lists')
+            .insert({
+              house_id: houseId, status: 'shopping', source: 'manual',
+              purchased_on: todayStr(), period_id: period?.id ?? null,
+            }).select('id').single()
+          if (listErr) throw new Error(listErr.message)
+          list = created
+        }
+        const { data: existing } = await supabase.from('shopping_list_items')
+          .select('ingredient_id').eq('list_id', list.id).eq('bought', false)
+        const already = new Set((existing ?? []).map(r => r.ingredient_id))
+        const rows = toAdd.filter(i => !already.has(i.ingredient_id)).map(i => ({
+          house_id: houseId, list_id: list.id, ingredient_id: i.ingredient_id,
+          quantity: 1, auto_generated: false, meal_id: meal.id, bought: false, source: 'manual',
+        }))
+        if (rows.length) {
+          const { error: shopErr } = await supabase.from('shopping_list_items').insert(rows)
+          if (shopErr) throw new Error(shopErr.message)
+        }
       }
-      const rows = toAdd.map(i => ({
-        house_id: houseId, list_id: list.id, ingredient_id: i.ingredient_id,
-        quantity: i.required_quantity ? Math.max(1, Math.round(i.required_quantity)) : 1,
-        auto_generated: false, meal_id: meal.id, bought: false,
-      }))
-      const { error: shopErr } = await supabase.from('shopping_list_items').insert(rows)
-      if (shopErr) { setErr(shopErr.message); setSaving(false); return }
-    }
-    setSaving(false)
-    onSaved()
+      setSaving(false)
+      onSaved()
+    } catch (e2) { setErr(e2.message); setSaving(false) }
   }
 
   return (
@@ -270,13 +370,41 @@ function PlanModal({ meal, houseId, onClose, onSaved }) {
           <button className="modal-close" onClick={onClose}>✕</button>
         </div>
         <form onSubmit={save}>
-          <label>Date
-            <input type="date" value={date} onChange={e => setDate(e.target.value)} />
-          </label>
+          <div className="field-row">
+            <label>Date
+              <input type="date" value={date} onChange={e => setDate(e.target.value)} required />
+            </label>
+            <label style={{ maxWidth: 140 }}>Slot
+              <select value={slot} onChange={e => setSlot(e.target.value)}>
+                <option value="breakfast">Breakfast</option>
+                <option value="lunch">Lunch</option>
+                <option value="dinner">Dinner</option>
+              </select>
+            </label>
+            <label style={{ maxWidth: 120 }}>Servings
+              <input type="number" min="1" step="1" value={servings} onChange={e => setServings(e.target.value)} />
+            </label>
+          </div>
+
+          {covering.length > 1 && (
+            <label>Which period
+              <select value={periodId} onChange={e => setPeriodId(e.target.value)}>
+                {covering.map(p => (
+                  <option key={p.id} value={p.id}>{p.name || `${p.starts_on} → ${p.ends_on}`}</option>
+                ))}
+              </select>
+            </label>
+          )}
+          <p className="muted-note">
+            {covering.length === 0
+              ? 'No period covers that date, so this is planned outside any of them.'
+              : `One serving goes on ${date}; the other ${Math.max(0, Number(servings) - 1)} wait in the planner.`}
+          </p>
+
           {ingredients.length > 0 && (
             <>
               <h3 style={{ marginTop: '.8rem' }}>Add to shopping list</h3>
-              <p className="meta" style={{ margin: '-.2rem 0 .5rem' }}>Tick ingredients you need to buy — they go on your current shopping list.</p>
+              <p className="meta" style={{ margin: '-.2rem 0 .5rem' }}>Things you already have start unticked.</p>
               {ingredients.map(i => (
                 <div key={i.ingredient_id} className="ing-picker-row">
                   <input type="checkbox" checked={!!checked[i.ingredient_id]} onChange={() => setChecked(prev => ({ ...prev, [i.ingredient_id]: !prev[i.ingredient_id] }))} />
@@ -291,7 +419,7 @@ function PlanModal({ meal, houseId, onClose, onSaved }) {
           )}
           {err && <p className="msg err">{err}</p>}
           <div className="btn-row" style={{ marginTop: '.9rem' }}>
-            <button className="btn" type="submit" disabled={saving}>{saving ? <span className="spinner" /> : 'Save plan'}</button>
+            <button className="btn" type="submit" disabled={saving}>{saving ? <span className="spinner" /> : 'Plan it'}</button>
             <button className="btn secondary" type="button" onClick={onClose}>Cancel</button>
           </div>
         </form>
@@ -325,7 +453,6 @@ function DishDetail({ meal, dishesById, childrenByParent, onOpen, onEdit, onAddV
           {meal.dish_type ? ` · ${meal.dish_type}` : ''}
           {meal.prep_time_min ? ` · ${meal.prep_time_min}m` : ''}
           {meal.servings ? ` · ${meal.servings} servings` : ''}
-          {meal.planned_date ? ` · 📅 ${meal.planned_date}` : ''}
         </p>
 
         {(meal.photo_urls ?? []).length > 0 && (
@@ -452,7 +579,6 @@ export default function Meals() {
             <span className="name">{dish.name}</span>
             {dish.dish_type && <span className="pill gray">{dish.dish_type}</span>}
             {variantCount > 0 && <span className="pill blue">{variantCount} variant{variantCount === 1 ? '' : 's'}</span>}
-            {dish.planned_date && <span className="pill green" style={{ fontSize: '.7rem' }}>📅 {dish.planned_date}</span>}
             {frac != null && (
               <span style={{ display: 'flex', alignItems: 'center', gap: '.4rem' }}>
                 <span className="fbar"><span className="fbar-fill" style={{ width: `${pct}%` }} /></span>

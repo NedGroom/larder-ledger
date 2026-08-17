@@ -22,6 +22,16 @@ export default function Settings() {
   const [nameMsg, setNameMsg] = useState('')
   const [emailMsg, setEmailMsg] = useState('')
 
+  // Personal daily targets. Yours, not the house's — the planner's day bars and
+  // the analyse view measure what's allocated to you against these.
+  const [targets, setTargets] = useState({
+    target_kcal: userRow?.target_kcal ?? '',
+    target_protein_g: userRow?.target_protein_g ?? '',
+    target_fibre_g: userRow?.target_fibre_g ?? '',
+  })
+  const [savingTargets, setSavingTargets] = useState(false)
+  const [targetMsg, setTargetMsg] = useState('')
+
   useEffect(() => {
     if (!userRow) return
     supabase
@@ -58,6 +68,16 @@ export default function Settings() {
     setEmailMsg(error ? error.message : 'Confirmation sent to new email.')
     setSavingEmail(false)
     if (!error) setTimeout(() => { setEmailMsg(''); setEditEmail(false) }, 2000)
+  }
+
+  async function saveTargets() {
+    setSavingTargets(true); setTargetMsg('')
+    const patch = Object.fromEntries(
+      Object.entries(targets).map(([k, v]) => [k, v === '' ? null : Number(v)]))
+    const { error } = await supabase.from('users').update(patch).eq('id', userRow.id)
+    setTargetMsg(error ? error.message : 'Saved — reload to see the plan update.')
+    setSavingTargets(false)
+    if (!error) setTimeout(() => setTargetMsg(''), 2500)
   }
 
   async function signOut() { await supabase.auth.signOut() }
@@ -180,6 +200,32 @@ export default function Settings() {
       </div>
 
       {/* ── Coming soon ─────────────────────────────────────────── */}
+      <div className="settings-section">
+        <div className="settings-section-label">Daily targets</div>
+        <p className="muted-note">
+          Yours alone. The planner's day bars and the analyse view compare these against
+          what's been allocated to you. Leave any blank to stop measuring it.
+        </p>
+        <div className="field-row">
+          <label>Calories
+            <input type="number" min="0" step="10" value={targets.target_kcal}
+              onChange={e => setTargets(t => ({ ...t, target_kcal: e.target.value }))} placeholder="2200" />
+          </label>
+          <label>Protein (g)
+            <input type="number" min="0" step="1" value={targets.target_protein_g}
+              onChange={e => setTargets(t => ({ ...t, target_protein_g: e.target.value }))} placeholder="100" />
+          </label>
+          <label>Fibre (g)
+            <input type="number" min="0" step="1" value={targets.target_fibre_g}
+              onChange={e => setTargets(t => ({ ...t, target_fibre_g: e.target.value }))} placeholder="30" />
+          </label>
+        </div>
+        <button className="btn small" onClick={saveTargets} disabled={savingTargets}>
+          {savingTargets ? <span className="spinner" /> : 'Save targets'}
+        </button>
+        {targetMsg && <p className="msg ok">{targetMsg}</p>}
+      </div>
+
       <div className="settings-section">
         <div className="settings-section-label">Coming soon</div>
         <div className="settings-group settings-group-muted">

@@ -5,6 +5,7 @@ import IngredientBrowser from '../components/IngredientBrowser.jsx'
 import IngredientPanel from '../components/IngredientPanel.jsx'
 import Receipts from './Receipts.jsx'
 import { loadLarder, loadPrices, priceFor, recordPurchase, undoPurchase } from '../lib/larder.js'
+import { requirementsForPeriod, todayStr as planToday } from '../lib/planner.js'
 
 // Shopping is a loop:
 //   ① Build   — scroll the larder and set quantities for what you want
@@ -55,6 +56,41 @@ function ShopRow({ item, onBought, onUndo, onRemove }) {
   )
 }
 
+/**
+ * Pull a period's planned cooks onto the list. The plan is a source for the
+ * shopping list, never a second list of its own.
+ */
+function PlanPreset({ periods, components, ingredients, onFill }) {
+  const [periodId, setPeriodId] = useState(String(periods[0]?.id ?? ''))
+  const [includeStocked, setIncludeStocked] = useState(false)
+  const period = periods.find(p => String(p.id) === periodId)
+
+  const need = period ? requirementsForPeriod(period, components) : {}
+  const outstanding = Object.keys(need).map(Number)
+    .filter(id => includeStocked || !ingredients.find(i => i.id === id)?.has_any).length
+
+  return (
+    <div className="plan-preset">
+      <span className="meta">From the plan</span>
+      <select value={periodId} onChange={e => setPeriodId(e.target.value)}>
+        {periods.map(p => (
+          <option key={p.id} value={p.id}>
+            {p.name || `${p.starts_on} → ${p.ends_on}`}
+          </option>
+        ))}
+      </select>
+      <label className="plan-preset-check">
+        <input type="checkbox" checked={includeStocked} onChange={e => setIncludeStocked(e.target.checked)} />
+        <span>include what's in the house</span>
+      </label>
+      <button className="btn small secondary" type="button" disabled={!period || outstanding === 0}
+        onClick={() => onFill(period, includeStocked)}>
+        Add {outstanding} item{outstanding === 1 ? '' : 's'}
+      </button>
+    </div>
+  )
+}
+
 export default function Shopping() {
   const { house } = useApp()
   const [view, setView] = useState('build')
@@ -76,6 +112,8 @@ export default function Shopping() {
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState('')
   const [selected, setSelected] = useState(null)      // ingredient detail panel
+  const [periods, setPeriods] = useState([])
+  const [planComponents, setPlanComponents] = useState([])
   const [showReceipt, setShowReceipt] = useState(false)
   const [receiptOpened, setReceiptOpened] = useState(false)
   const [showAddMore, setShowAddMore] = useState(false)
@@ -88,6 +126,17 @@ export default function Shopping() {
       supabase.from('shopping_lists').select('*, stores(name)').eq('house_id', house.id)
         .in('status', ['building', 'shopping']).order('created_at', { ascending: false }).limit(1),
     ])
+
+    // What the meal plan says this house intends to cook — the shopping list's
+    // other source, alongside browsing the larder by hand.
+    const [{ data: per }, { data: comps }] = await Promise.all([
+      supabase.from('periods').select('*').eq('house_id', house.id).order('starts_on', { ascending: false }),
+      supabase.from('cook_components')
+        .select('id, cooks(period_id), cook_component_ingredients(ingredient_id, qty_total)')
+        .eq('house_id', house.id),
+    ])
+    setPeriods(per ?? [])
+    setPlanComponents(comps ?? [])
     setIngredients(ings)
     setCategories(cats)
     setStores(st ?? [])
@@ -153,6 +202,24 @@ export default function Shopping() {
     if (qty > 0) next[id] = qty; else delete next[id]
     return next
   })
+
+  /**
+   * Tick everything a period's planned cooks call for. Things already in the
+   * house are left off — you'll see them greyed in the larder either way, so
+   * the plan being fully covered stays visible.
+   */
+  function fillFromPlan(period, includeStocked) {
+    const need = requirementsForPeriod(period, planComponents)
+    const ids = Object.keys(need).map(Number)
+      .filter(id => includeStocked || !ingredients.find(i => i.id === id)?.has_any)
+    if (!ids.length) { setMsg('That period’s cooks don’t need anything you haven’t got.'); return }
+    setPicked(p => {
+      const next = { ...p }
+      for (const id of ids) next[id] ??= 1
+      return next
+    })
+    setMsg('')
+  }
 
   async function toggleKeep(ing) {
     const next = !(ing.keep ?? true)
@@ -330,6 +397,10 @@ export default function Shopping() {
             <input type="date" value={shopDate} onChange={e => setShopDate(e.target.value)} />
           </label>
         </div>
+
+        {periods.length > 0 && (
+          <PlanPreset periods={periods} components={planComponents} ingredients={ingredients} onFill={fillFromPlan} />
+        )}
 
         <IngredientBrowser
           houseId={house.id}

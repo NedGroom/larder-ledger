@@ -13,19 +13,25 @@ the line you planned instead of duplicating it.
 
 ## Running them
 
-They need a dev server and Playwright. Playwright is deliberately not a
-dependency in `package.json` — install it on demand:
+The planner's arithmetic is tested separately as pure functions — no browser,
+no server, nothing to set up:
+
+```bash
+cd web && node test/planner-math.test.mjs
+```
+
+The browser suites need a dev server and Playwright. Playwright is deliberately
+not a dependency in `package.json` — install it on demand:
 
 ```bash
 cd web
-printf 'VITE_SUPABASE_URL=http://127.0.0.1:9999\nVITE_SUPABASE_ANON_KEY=test\n' > .env.test
-npm run dev -- --mode test &          # or just `npm run dev` with your normal .env
-npx playwright@latest install-deps 2>/dev/null || true
+printf 'VITE_SUPABASE_URL=http://127.0.0.1:9999\nVITE_SUPABASE_ANON_KEY=test\n' > .env
+npm run dev &
 npm i --no-save playwright
 
-node test/larder-and-shop.test.mjs
-node test/receipt-as-shop.test.mjs
-node test/receipt-fills-shop.test.mjs
+for t in larder-and-shop receipt-as-shop receipt-fills-shop planner dishes; do
+  node test/$t.test.mjs
+done
 ```
 
 Each script exits non-zero if any check fails **or** if the browser logged any
@@ -34,13 +40,16 @@ error, and prints a line per check.
 `CHROME_PATH` overrides the Chromium binary if Playwright's default location
 isn't right for your machine.
 
-## The three suites
+## The suites
 
 | File | Covers |
 |---|---|
 | `larder-and-shop.test.mjs` | Browsing the larder (categories, dimming, search, quick-create), building a list from it, buying/undoing, adding mid-shop, history |
 | `receipt-as-shop.test.mjs` | A receipt scanned in the Shops tab becoming its own completed shop, with the shop and date read off the photo |
 | `receipt-fills-shop.test.mjs` | A receipt scanned mid-shop filling the list already in progress |
+| `planner.test.mjs` | The deck, adding to a cook, placing servings, the analyse view, and handing off to a shop |
+| `dishes.test.mjs` | Authoring a dish with computable quantities, and the plan-a-dish shortcut |
+| `planner-math.test.mjs` | The planner's arithmetic as pure functions (overlapping periods, scaling, nutrition, card debits) |
 
 ## A caveat worth knowing
 
