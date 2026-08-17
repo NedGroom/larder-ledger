@@ -10,6 +10,8 @@ ALTER TABLE IF EXISTS users               ENABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS house_users         ENABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS ingredients         ENABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS ingredient_prices   ENABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS categories            ENABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS ingredient_categories ENABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS meals               ENABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS meal_ingredients    ENABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS stores              ENABLE ROW LEVEL SECURITY;
@@ -68,6 +70,7 @@ CREATE POLICY "house_users: delete own"       ON house_users FOR DELETE
 
 -- POLICIES: ingredients, meals, stores, shopping_list_items, receipts
 CREATE POLICY "ingredients: house members"         ON ingredients         FOR ALL USING (is_house_member(house_id)) WITH CHECK (is_house_member(house_id));
+CREATE POLICY "categories: house members"          ON categories          FOR ALL USING (is_house_member(house_id)) WITH CHECK (is_house_member(house_id));
 CREATE POLICY "meals: house members"               ON meals               FOR ALL USING (is_house_member(house_id)) WITH CHECK (is_house_member(house_id));
 CREATE POLICY "stores: house members"              ON stores              FOR ALL USING (is_house_member(house_id)) WITH CHECK (is_house_member(house_id));
 CREATE POLICY "shopping_lists: house members"      ON shopping_lists      FOR ALL USING (is_house_member(house_id)) WITH CHECK (is_house_member(house_id));
@@ -82,5 +85,10 @@ CREATE POLICY "meal_ingredients: house members"
 
 CREATE POLICY "ingredient_prices: house members"
   ON ingredient_prices FOR ALL
+  USING (is_house_member((SELECT house_id FROM ingredients WHERE id = ingredient_id)))
+  WITH CHECK (is_house_member((SELECT house_id FROM ingredients WHERE id = ingredient_id)));
+
+CREATE POLICY "ingredient_categories: house members"
+  ON ingredient_categories FOR ALL
   USING (is_house_member((SELECT house_id FROM ingredients WHERE id = ingredient_id)))
   WITH CHECK (is_house_member((SELECT house_id FROM ingredients WHERE id = ingredient_id)));

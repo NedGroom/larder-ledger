@@ -1,13 +1,15 @@
 import { useState, useRef, useEffect } from 'react'
 import { supabase } from '../lib/supabase.js'
-import { useApp } from '../App.jsx'
+import { useApp, defaultReceiptSession } from '../App.jsx'
 import { PROVIDERS, extractPrices } from '../lib/ai.js'
 import logger from '../lib/logger.js'
-import { defaultCanonicalRateUnit, calcCanonicalRate } from '../lib/units.js'
+import { findOrCreateIngredient, recordPurchase } from '../lib/larder.js'
 
 const PROVIDER_KEYS = Object.keys(PROVIDERS)
 const LS_PROVIDER = 'll_ai_provider'
 const LS_KEY      = 'll_ai_key'
+
+const today = () => new Date().toISOString().slice(0, 10)
 
 // ── Single candidate card ─────────────────────────────────────────────────────
 function CandidateCard({ row, ingredients, houseMembers, onChange, onIgnore, onSave, saving }) {
@@ -146,7 +148,7 @@ function CandidateCard({ row, ingredients, houseMembers, onChange, onIgnore, onS
 }
 
 // ── Candidate list + save ─────────────────────────────────────────────────────
-function CandidateTable({ candidates, ingredients, houseMembers, houseId, storeId, onItemSaved, onDone }) {
+function CandidateTable({ candidates, ingredients, houseMembers, houseId, storeId, ensureList, onPurchases, onItemSaved, onDone }) {
   const [rows, setRows] = useState(candidates.map(c => ({
     ...c,
     quantity:              Math.max(1, Number(c.quantity ?? 1)),
@@ -182,75 +184,55 @@ function CandidateTable({ candidates, ingredients, houseMembers, houseId, storeI
 
     setRows(prev => prev.map((r, i) => i === idx ? { ...r, _saving: true } : r))
 
+    const fail = message => {
+      setSaveErr(message)
+      setRows(prev => prev.map((r, i) => i === idx ? { ...r, _saving: false } : r))
+    }
+
     let ingredientId = row.matched_ingredient_id ? +row.matched_ingredient_id : null
 
+    // A name off a receipt becomes a real ingredient, matched to an existing one
+    // where the house already knows it — never a loose string.
     if (!ingredientId && row.new_ingredient_name?.trim()) {
       const name = row.new_ingredient_name.trim()
-      // Default canonical_rate_unit from the item's unit_size_unit
-      const canonRateUnit = defaultCanonicalRateUnit(row.unit)
-      const { data: newIng, error: ingErr } = await supabase
-        .from('ingredients')
-        .insert({
-          house_id: houseId,
-          name,
-          name_normalized: name.toLowerCase(),
-          has_any: false,
-          canonical_rate_unit: canonRateUnit || null,
-        })
-        .select('id, canonical_rate_unit')
-        .single()
-      if (ingErr) {
-        setSaveErr(`Failed to create "${name}": ${ingErr.message}`)
-        setRows(prev => prev.map((r, i) => i === idx ? { ...r, _saving: false } : r))
-        return
-      }
-      ingredientId = newIng.id
+      try {
+        const ing = await findOrCreateIngredient({ houseId, name, keep: true, unitSizeUnit: row.unit })
+        ingredientId = ing.id
+      } catch (e) { return fail(`Failed to create "${name}": ${e.message}`) }
     }
 
     if (!ingredientId || !row.price) {
-      setSaveErr(`Item "${row.description || idx + 1}" needs an ingredient and price.`)
-      setRows(prev => prev.map((r, i) => i === idx ? { ...r, _saving: false } : r))
-      return
+      return fail(`Item "${row.description || idx + 1}" needs an ingredient and price.`)
     }
 
-    // Fetch canonical_rate_unit from existing ingredient (may differ from new ones above)
-    const { data: ingData } = await supabase
-      .from('ingredients')
-      .select('canonical_rate_unit')
-      .eq('id', ingredientId)
-      .single()
+    // A receipt line is a purchase, exactly like ticking the item off in the
+    // shop: same list, same row shape, same price log, same return to stock.
+    let listId
+    try { listId = await ensureList() } catch (e) { return fail(`Couldn't start the shop: ${e.message}`) }
 
-    const canonRateUnit = ingData?.canonical_rate_unit || defaultCanonicalRateUnit(row.unit)
-    const canonRate = calcCanonicalRate(+row.price, row.unit, canonRateUnit)
+    let item
+    try {
+      item = await recordPurchase({
+        houseId,
+        listId,
+        ingredientId,
+        quantity: row.quantity,
+        price: +row.price,
+        unitSizeUnit: row.unit,
+        forUserId: row.for_user_id || null,
+        storeId,
+        source: 'receipt-ai',
+      })
+    } catch (e) { return fail(`Save failed: ${e.message}`) }
 
-    const { error } = await supabase.from('ingredient_prices').insert({
-      ingredient_id:      ingredientId,
-      store_id:           storeId ? +storeId : null,
-      price:              +row.price,
-      unit_size_unit:     row.unit || null,
-      canonical_rate:     canonRate,
-      canonical_rate_unit: canonRateUnit || null,
-      currency:           'GBP',
-      source:             'receipt-ai',
-    })
-
-    if (!error) {
-      // Mark ingredient as in-stock (has_any) regardless of who it was bought for
-      await supabase
-        .from('ingredients')
-        .update({ has_any: true })
-        .eq('id', ingredientId)
-      const savedRow = { ...row, _saved: true, _saving: false }
-      setRows(prev => prev.map((r, i) => i === idx ? savedRow : r))
-      setSavedCount(c => c + 1)
-      onItemSaved(savedRow)
-      setTimeout(() => {
-        setRows(prev => prev.map((r, i) => i === idx ? { ...r, _removedFromActive: true } : r))
-      }, 350)
-    } else {
-      setSaveErr(`Save failed: ${error.message}`)
-      setRows(prev => prev.map((r, i) => i === idx ? { ...r, _saving: false } : r))
-    }
+    onPurchases?.([item])
+    const savedRow = { ...row, _saved: true, _saving: false, _itemId: item.id }
+    setRows(prev => prev.map((r, i) => i === idx ? savedRow : r))
+    setSavedCount(c => c + 1)
+    onItemSaved(savedRow)
+    setTimeout(() => {
+      setRows(prev => prev.map((r, i) => i === idx ? { ...r, _removedFromActive: true } : r))
+    }, 350)
   }
 
   async function saveAll() {
@@ -604,18 +586,36 @@ function SettlementPage({ savedItems, aiFees, aiDiscounts, aiReceiptTotal, house
 }
 
 // ── Main Receipts page ────────────────────────────────────────────────────────
-export default function Receipts() {
+/**
+ * Two ways in, one outcome — a receipt line always ends up as a purchase on a
+ * shopping list:
+ *
+ *   mode="standalone" (Shops tab)  — the receipt IS the shop. It opens its own
+ *     completed list, with the shop and date read off the photo for you to
+ *     confirm or correct.
+ *   mode="attach" (mid-shop)       — fills in the list you're already shopping,
+ *     ticking off what you planned and adding whatever else you picked up.
+ */
+export default function Receipts({ mode = 'standalone', listId = null, lockedStoreId = null, onPurchases }) {
   const { house, session, receiptSession, setReceiptSession } = useApp()
 
-  // Helper: patch a subset of the persisted receipt session
-  function rs(patch) { setReceiptSession(prev => ({ ...prev, ...patch })) }
+  // The Shops-tab scan is long-lived and survives tab switches, so it keeps its
+  // state in App context. A scan opened inside a shop is throwaway and keeps its
+  // own, so the two can never overwrite each other.
+  const [localSession, setLocalSession] = useState(defaultReceiptSession)
+  const persisted = mode === 'standalone'
+  const sessionState = persisted ? receiptSession : localSession
+  const setSessionState = persisted ? setReceiptSession : setLocalSession
+  function rs(patch) { setSessionState(prev => ({ ...prev, ...patch })) }
 
-  // Persisted across tab switches (lives in App context)
   const {
     plainText, candidates, storeId, extractErr,
     inputMode, stores, ingredients, houseMembers, storesLoaded,
     aiFees, aiDiscounts, aiReceiptTotal, savedItems, showSettlement,
-  } = receiptSession
+    aiStoreName, purchaseDate, receiptListId,
+  } = sessionState
+
+  const effectiveStoreId = mode === 'attach' ? (lockedStoreId ?? '') : storeId
 
   // Not persisted (local only — File objects can't be serialised)
   const [provider, setProvider] = useState(() => localStorage.getItem(LS_PROVIDER) || PROVIDER_KEYS[0])
@@ -632,13 +632,28 @@ export default function Receipts() {
   const fileRef = useRef()
   const currentProvider = PROVIDERS[provider]
 
+  // Mirrors receiptListId so async save loops can read it without a stale
+  // closure; restores itself if the Shops-tab scan survived a tab switch.
+  const listIdRef = useRef(receiptListId ?? null)
+  useEffect(() => { listIdRef.current = receiptListId ?? null }, [receiptListId])
+
+  // "Save all" saves row by row from a single closure, so the accumulating list
+  // has to live somewhere that doesn't go stale between iterations.
+  const savedRowsRef = useRef(savedItems ?? [])
+
   // If user switches to a provider that doesn't support images, reset to text
   useEffect(() => {
     if (!currentProvider?.supportsImage && inputMode === 'image') rs({ inputMode: 'text' })
   }, [provider])
 
+  /**
+   * Returns what it loaded rather than only stashing it in state: the caller
+   * needs these values in the same tick, and a state read there would still be
+   * the empty pre-load array — which is how the AI ended up being handed no
+   * known ingredients to match against.
+   */
   async function ensureLoaded() {
-    if (storesLoaded) return
+    if (storesLoaded) return { stores, ingredients, houseMembers, storeId }
     const [{ data: s }, { data: i }, { data: hu }] = await Promise.all([
       supabase.from('stores').select('*').eq('house_id', house.id).order('name'),
       supabase.from('ingredients').select('id,name').eq('house_id', house.id).order('name'),
@@ -646,18 +661,75 @@ export default function Receipts() {
     ])
     const members = (hu ?? []).map(r => r.users).filter(Boolean)
     const storeList = s ?? []
+    const ingList = i ?? []
+    const firstStore = storeList.length ? storeList[0].id : ''
     rs({
       stores: storeList,
-      ingredients: i ?? [],
+      ingredients: ingList,
       houseMembers: members,
-      storeId: storeList.length ? storeList[0].id : '',
+      storeId: firstStore,
       storesLoaded: true,
     })
+    return { stores: storeList, ingredients: ingList, houseMembers: members, storeId: firstStore }
   }
 
   function saveConfig() {
     localStorage.setItem(LS_PROVIDER, provider)
     localStorage.setItem(LS_KEY, apiKey)
+  }
+
+  /** Create the shop the receipt was printed at, if it isn't known yet. */
+  async function createStoreFromReceipt() {
+    const name = (aiStoreName ?? '').trim()
+    if (!name) return
+    const existing = stores.find(s => s.name.toLowerCase() === name.toLowerCase())
+    if (existing) { rs({ storeId: existing.id }); return }
+    const { data, error } = await supabase
+      .from('stores').insert({ house_id: house.id, name }).select('id, name').single()
+    if (error) { rs({ extractErr: error.message }); return }
+    rs({ stores: [...stores, data].sort((a, b) => a.name.localeCompare(b.name)), storeId: data.id })
+  }
+
+  /**
+   * The list this receipt's purchases belong to.
+   *
+   * Mid-shop there already is one. Standalone, the receipt opens its own — born
+   * finished, since the shopping already happened, which also keeps it out of
+   * the way of the "one shop at a time" rule on the Shopping tab.
+   */
+  async function ensureList() {
+    if (mode === 'attach') return listId
+    // Read through a ref, not state: "Save all" runs a row at a time from one
+    // closure, and a stale read here would open a new shop for every line.
+    if (listIdRef.current) return listIdRef.current
+
+    const when = purchaseDate || today()
+    const { data, error } = await supabase
+      .from('shopping_lists')
+      .insert({
+        house_id: house.id,
+        store_id: storeId ? +storeId : null,
+        status: 'done',
+        source: 'receipt',
+        purchased_on: when,
+        completed_at: new Date().toISOString(),
+        receipt_total: aiReceiptTotal ?? null,
+        total_paid: 0,
+      })
+      .select('id').single()
+    if (error) throw new Error(error.message)
+    listIdRef.current = data.id
+    rs({ receiptListId: data.id })
+    return data.id
+  }
+
+  // Keep the shop's running total in step with what's been confirmed so far, so
+  // History is right even if the scan is abandoned half way.
+  async function syncListTotal(rows) {
+    if (mode !== 'standalone' || !listIdRef.current) return
+    const raw = rows.reduce((t, r) => t + Number(r.quantity ?? 1) * Number(r.price || 0), 0)
+    const total = Math.round(raw * 100) / 100
+    await supabase.from('shopping_lists').update({ total_paid: total }).eq('id', listIdRef.current)
   }
 
   async function runExtraction() {
@@ -666,7 +738,7 @@ export default function Receipts() {
     if (currentProvider?.requiresApiKey && !apiKey) { rs({ extractErr: 'Enter an API key above' }); return }
     if (inputMode === 'image' && !imageFile) { rs({ extractErr: 'Select an image first' }); return }
     if (inputMode === 'text' && !plainText.trim()) { rs({ extractErr: 'Paste some receipt text first' }); return }
-    await ensureLoaded()
+    const loaded = await ensureLoaded()
     setExtracting(true)
     try {
       let content, contentType, imageMime
@@ -679,9 +751,31 @@ export default function Receipts() {
         provider, apiKey,
         sessionToken: session?.access_token,
         content, contentType, imageMime,
-        knownIngredients: ingredients.map(i => i.name),
+        knownIngredients: loaded.ingredients.map(i => i.name),
+        knownStores: loaded.stores.map(s => s.name),
       })
-      rs({ candidates: result.items, aiFees: result.fees, aiDiscounts: result.discounts, aiReceiptTotal: result.receipt_total, savedItems: [], showSettlement: false })
+
+      // Take the shop and date off the receipt as a starting point — the user
+      // confirms them before anything is written.
+      const matchedStore = result.store_name
+        ? loaded.stores.find(s => s.name.toLowerCase() === result.store_name.toLowerCase())
+        : null
+
+      rs({
+        candidates: result.items,
+        aiFees: result.fees,
+        aiDiscounts: result.discounts,
+        aiReceiptTotal: result.receipt_total,
+        aiStoreName: result.store_name ?? null,
+        purchaseDate: result.purchase_date || today(),
+        storeId: matchedStore ? matchedStore.id : loaded.storeId,
+        receiptListId: null,
+        savedItems: [],
+        showSettlement: false,
+      })
+      // A fresh scan is a fresh shop.
+      listIdRef.current = null
+      savedRowsRef.current = []
     } catch (e) {
       rs({ extractErr: e.message })
       setExtractErrDetail(logger.errors().slice(-5))
@@ -714,9 +808,11 @@ export default function Receipts() {
 
       {!showSettlement && (
         <>
-      <h2>Receipt → prices</h2>
+      <h2>{mode === 'attach' ? 'Fill this shop from the receipt' : 'Receipt → shop'}</h2>
       <p style={{ fontSize: '.82rem', color: '#888', marginBottom: '.75rem' }}>
-        Paste receipt text or upload a photo. AI extracts the prices for you to review before saving.
+        {mode === 'attach'
+          ? 'Paste or photograph the receipt. Lines you confirm tick off what you planned and add anything else you picked up.'
+          : 'Paste or photograph the receipt. It becomes a completed shop — prices logged, items back in your Larder.'}
       </p>
 
       {/* ── AI provider config ───────────────────────────────────────── */}
@@ -875,14 +971,41 @@ export default function Receipts() {
           <hr className="divider" />
           <h2>Review extracted items ({candidates.length} found)</h2>
 
-          {stores.length > 0 && (
-            <label style={{ marginBottom: '.75rem', display: 'block' }}>
-              Store these prices under
-              <select value={storeId} onChange={e => rs({ storeId: e.target.value })}>
-                <option value="">— no store —</option>
-                {stores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-              </select>
-            </label>
+          {/* Where and when — read off the receipt, yours to correct. */}
+          {mode === 'standalone' && (
+            <div className="receipt-shop-confirm">
+              <div className="field-row">
+                <label style={{ flex: 1 }}>
+                  Shop
+                  <select value={storeId} onChange={e => rs({ storeId: e.target.value })} disabled={!!receiptListId}>
+                    <option value="">— no shop —</option>
+                    {stores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </select>
+                </label>
+                <label style={{ maxWidth: 170 }}>
+                  Date of shop
+                  <input
+                    type="date"
+                    value={purchaseDate || today()}
+                    onChange={e => rs({ purchaseDate: e.target.value })}
+                    disabled={!!receiptListId}
+                  />
+                </label>
+              </div>
+              {aiStoreName && !stores.some(s => s.name.toLowerCase() === aiStoreName.toLowerCase()) && (
+                <p className="muted-note" style={{ marginTop: '.35rem' }}>
+                  Receipt says <strong>{aiStoreName}</strong>, which isn't a shop you track yet.{' '}
+                  <button className="btn ghost small" onClick={createStoreFromReceipt} disabled={!!receiptListId}>
+                    + Add “{aiStoreName}”
+                  </button>
+                </p>
+              )}
+              {receiptListId && (
+                <p className="muted-note" style={{ marginTop: '.35rem' }}>
+                  This shop is now recorded — shop and date are locked in. You'll find it under Shopping → History.
+                </p>
+              )}
+            </div>
           )}
 
           <p style={{ fontSize: '.8rem', color: '#888', marginBottom: '.5rem' }}>
@@ -894,9 +1017,19 @@ export default function Receipts() {
             ingredients={ingredients}
             houseMembers={houseMembers}
             houseId={house.id}
-            storeId={storeId}
-            onItemSaved={row => rs({ savedItems: [...(savedItems || []), row] })}
-            onDone={finalSavedRows => rs({ showSettlement: true, savedItems: finalSavedRows })}
+            storeId={effectiveStoreId}
+            ensureList={ensureList}
+            onPurchases={onPurchases}
+            onItemSaved={row => {
+              savedRowsRef.current = [...savedRowsRef.current, row]
+              rs({ savedItems: savedRowsRef.current })
+              syncListTotal(savedRowsRef.current)
+            }}
+            onDone={finalSavedRows => {
+              savedRowsRef.current = finalSavedRows
+              rs({ showSettlement: true, savedItems: finalSavedRows })
+              syncListTotal(finalSavedRows)
+            }}
           />
         </>
       )}

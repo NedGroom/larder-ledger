@@ -1,29 +1,42 @@
 import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../lib/supabase.js'
 import { useApp } from '../App.jsx'
+import IngredientBrowser from '../components/IngredientBrowser.jsx'
+import IngredientPanel from '../components/IngredientPanel.jsx'
+import Receipts from './Receipts.jsx'
+import { loadLarder, loadPrices, priceFor, recordPurchase, undoPurchase } from '../lib/larder.js'
 
 // Shopping is a loop:
-//   ① Build   — pick from what you're out of, choose a shop, set quantities
-//   ② Shop    — mark items bought (flips them back to in-stock + logs the price)
+//   ① Build   — scroll the larder and set quantities for what you want
+//   ② Shop    — mark items bought, by hand or from a receipt
 //   ③ History — past shops, kept for good
-// There is at most one active (building/shopping) list per house — "Make list"
-// reopens it rather than starting a second one.
+//
+// Building a list is the same act as browsing the larder: same cards, same
+// categories, same search. A line is "on the list" simply by having a quantity
+// above zero. Every line points at a real ingredient, so anything you buy once
+// is remembered and offered again next time.
+//
+// There is at most one active (building/shopping) list per house.
 
-const itemName = it => it.ingredients?.name ?? it.custom_name ?? '—'
+const itemName = it => it.ingredients?.name ?? '—'
+const today = () => new Date().toISOString().slice(0, 10)
 
 // A single row on the Shop screen. Kept at module scope (stable identity) so its
 // price/qty inputs don't lose focus when the parent re-renders.
-function ShopRow({ item, onBought, onRemove }) {
+function ShopRow({ item, onBought, onUndo, onRemove }) {
   const [price, setPrice] = useState(item.price_paid ?? '')
   const [qty, setQty] = useState(item.quantity ?? 1)
+  const [unit, setUnit] = useState(item.unit_size_unit ?? '')
+
   return (
     <div className="card" style={{ flexWrap: 'wrap', opacity: item.bought ? .7 : 1 }}>
       <span className="name" style={item.bought ? { textDecoration: 'line-through' } : undefined}>{itemName(item)}</span>
       {item.meals?.name && <span className="pill blue" style={{ fontSize: '.7rem' }}>🍲 {item.meals.name}</span>}
+      {item.source === 'receipt-ai' && <span className="pill gray" style={{ fontSize: '.7rem' }}>🧾 receipt</span>}
       <span className="meta">×{item.quantity}</span>
       {!item.bought
-        ? <button className="btn small" onClick={() => onBought(item, true, price === '' ? null : +price, +qty || 1)}>Bought</button>
-        : <button className="btn small secondary" onClick={() => onBought(item, false, null, item.quantity)}>Undo</button>}
+        ? <button className="btn small" onClick={() => onBought(item, price, qty, unit)}>Bought</button>
+        : <button className="btn small secondary" onClick={() => onUndo(item)}>Undo</button>}
       {!item.bought && <button className="btn small secondary" title="Remove from list" onClick={() => onRemove(item)}>✕</button>}
       {!item.bought && (
         <div className="bought-inputs" style={{ flexBasis: '100%' }}>
@@ -31,6 +44,8 @@ function ShopRow({ item, onBought, onRemove }) {
           <input type="number" step="0.01" min="0" value={price} onChange={e => setPrice(e.target.value)} placeholder="0.00" style={{ width: 70 }} />
           <span className="meta">× qty</span>
           <input type="number" min="1" value={qty} onChange={e => setQty(e.target.value)} style={{ width: 52 }} />
+          <span className="meta">pack</span>
+          <input value={unit} onChange={e => setUnit(e.target.value)} placeholder="500g" style={{ width: 64 }} />
         </div>
       )}
       {item.bought && item.price_paid != null && (
@@ -45,60 +60,41 @@ export default function Shopping() {
   const [view, setView] = useState('build')
   const [loading, setLoading] = useState(true)
 
-  const [candidates, setCandidates] = useState([])   // ingredients with has_any=false
+  const [ingredients, setIngredients] = useState([])
+  const [categories, setCategories] = useState([])
   const [stores, setStores] = useState([])
-  const [pricesByIng, setPricesByIng] = useState({}) // ingredient_id → { store_id: price }
+  const [pricesByIng, setPricesByIng] = useState({})
   const [activeList, setActiveList] = useState(null)  // {id, store_id, status, stores?}
   const [items, setItems] = useState([])              // items of the active list
   const [history, setHistory] = useState([])
-  const [histItems, setHistItems] = useState({})      // list_id → items[] (loaded on expand)
-  const [expandedHist, setExpandedHist] = useState(null) // list_id currently expanded, or null
+  const [histItems, setHistItems] = useState({})      // list_id → items[]
+  const [expandedHist, setExpandedHist] = useState(null)
 
-  // build-screen local state
-  const [picked, setPicked] = useState({})            // ingredient_id → { checked, qty }
-  const [oneOffs, setOneOffs] = useState([])          // [{ name, qty }]
-  const [oneOffName, setOneOffName] = useState('')
-  const [addName, setAddName] = useState('')          // add-to-active-list input
+  const [picked, setPicked] = useState({})            // ingredient_id → qty (build screen)
   const [storeId, setStoreId] = useState('')
+  const [shopDate, setShopDate] = useState(today())
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState('')
-  const [receiptNote, setReceiptNote] = useState('')
+  const [selected, setSelected] = useState(null)      // ingredient detail panel
+  const [showReceipt, setShowReceipt] = useState(false)
+  const [receiptOpened, setReceiptOpened] = useState(false)
+  const [showAddMore, setShowAddMore] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
-    const [{ data: cand }, { data: st }, { data: lists }] = await Promise.all([
-      supabase.from('ingredients').select('id, name, keep, has_any').eq('house_id', house.id).eq('has_any', false).order('name'),
+    const [{ ingredients: ings, categories: cats }, { data: st }, { data: lists }] = await Promise.all([
+      loadLarder(house.id),
       supabase.from('stores').select('id, name').eq('house_id', house.id).order('name'),
-      supabase.from('shopping_lists').select('*, stores(name)').eq('house_id', house.id).in('status', ['building', 'shopping']).order('created_at', { ascending: false }).limit(1),
+      supabase.from('shopping_lists').select('*, stores(name)').eq('house_id', house.id)
+        .in('status', ['building', 'shopping']).order('created_at', { ascending: false }).limit(1),
     ])
+    setIngredients(ings)
+    setCategories(cats)
     setStores(st ?? [])
+    setPricesByIng(await loadPrices(ings.map(i => i.id)))
+
     const list = lists?.[0] ?? null
     setActiveList(list)
-
-    // default build selection: every out item that we "keep" is ticked
-    const p = {}
-    for (const c of (cand ?? [])) p[c.id] = { checked: !!c.keep, qty: 1 }
-    setCandidates(cand ?? [])
-    setPicked(p)
-
-    // latest known price per (ingredient, store), for the build price preview
-    const candIds = (cand ?? []).map(c => c.id)
-    if (candIds.length) {
-      const { data: prices } = await supabase
-        .from('ingredient_prices')
-        .select('ingredient_id, store_id, price, noted_at')
-        .in('ingredient_id', candIds)
-        .order('noted_at', { ascending: false })
-      const map = {}
-      for (const row of (prices ?? [])) {
-        const k = row.store_id ?? '_'
-        map[row.ingredient_id] ??= {}
-        if (map[row.ingredient_id][k] == null) map[row.ingredient_id][k] = row.price // first = latest
-      }
-      setPricesByIng(map)
-    } else {
-      setPricesByIng({})
-    }
 
     if (list) {
       const { data: li } = await supabase
@@ -122,6 +118,7 @@ export default function Shopping() {
       .from('shopping_lists')
       .select('*, stores(name), shopping_list_items(count)')
       .eq('house_id', house.id).eq('status', 'done')
+      .order('purchased_on', { ascending: false, nullsFirst: false })
       .order('completed_at', { ascending: false })
     setHistory(data ?? [])
   }, [house.id])
@@ -140,85 +137,88 @@ export default function Shopping() {
     }
   }
 
-  // ── ① Build ─────────────────────────────────────────────────────────────────
-  const toggle = id => setPicked(p => ({ ...p, [id]: { ...p[id], checked: !p[id]?.checked } }))
-  const setQty = (id, qty) => setPicked(p => ({ ...p, [id]: { ...p[id], qty: Math.max(1, qty) } }))
-
-  // price for a candidate at the chosen shop (cheapest across shops when "Any")
-  function priceFor(ingredientId) {
-    const byStore = pricesByIng[ingredientId]
-    if (!byStore) return null
-    if (storeId) return byStore[storeId] ?? null
-    const vals = Object.values(byStore).filter(v => v != null)
-    return vals.length ? Math.min(...vals) : null
+  // Keep the local larder copy honest after a buy flips something into stock.
+  function markStocked(ingredientId) {
+    setIngredients(prev => prev.map(i => i.id === ingredientId ? { ...i, has_any: true } : i))
   }
-  function addOneOff() {
-    const n = oneOffName.trim()
-    if (!n) return
-    setOneOffs(o => [...o, { name: n, qty: 1 }])
-    setOneOffName('')
+
+  // Once a shop is under way its own store decides the prices shown, so a
+  // reload mid-shop doesn't silently fall back to cheapest-anywhere.
+  const previewStoreId = activeList ? (activeList.store_id ?? '') : storeId
+  const priceOf = id => priceFor(pricesByIng, id, previewStoreId)
+
+  // ── ① Build ─────────────────────────────────────────────────────────────────
+  const setQty = (id, qty) => setPicked(p => {
+    const next = { ...p }
+    if (qty > 0) next[id] = qty; else delete next[id]
+    return next
+  })
+
+  async function toggleKeep(ing) {
+    const next = !(ing.keep ?? true)
+    setIngredients(prev => prev.map(i => i.id === ing.id ? { ...i, keep: next } : i))
+    const { error } = await supabase.from('ingredients').update({ keep: next }).eq('id', ing.id)
+    if (error) setIngredients(prev => prev.map(i => i.id === ing.id ? { ...i, keep: ing.keep } : i))
   }
 
   async function startShop() {
-    const chosen = candidates.filter(c => picked[c.id]?.checked)
-    if (chosen.length === 0 && oneOffs.length === 0) { setMsg('Tick at least one item first'); return }
+    const chosen = Object.entries(picked).filter(([, q]) => q > 0)
+    if (chosen.length === 0) { setMsg('Add a quantity to something first'); return }
     setBusy(true); setMsg('')
+
     const { data: list, error } = await supabase
       .from('shopping_lists')
-      .insert({ house_id: house.id, store_id: storeId ? +storeId : null, status: 'shopping' })
+      .insert({
+        house_id: house.id,
+        store_id: storeId ? +storeId : null,
+        status: 'shopping',
+        purchased_on: shopDate || today(),
+        source: 'manual',
+      })
       .select('*, stores(name)').single()
     if (error) { setMsg(error.message); setBusy(false); return }
 
-    const rows = [
-      ...chosen.map(c => ({ house_id: house.id, list_id: list.id, ingredient_id: c.id, quantity: picked[c.id].qty, auto_generated: false, bought: false })),
-      ...oneOffs.map(o => ({ house_id: house.id, list_id: list.id, ingredient_id: null, custom_name: o.name, quantity: o.qty, auto_generated: false, bought: false })),
-    ]
+    const rows = chosen.map(([ingredientId, qty]) => ({
+      house_id: house.id,
+      list_id: list.id,
+      ingredient_id: +ingredientId,
+      quantity: qty,
+      auto_generated: false,
+      bought: false,
+      source: 'manual',
+    }))
     const { error: e2 } = await supabase.from('shopping_list_items').insert(rows)
     if (e2) { setMsg(e2.message); setBusy(false); return }
 
-    setOneOffs([]); setBusy(false)
+    setPicked({}); setBusy(false)
     await load()
     setView('shop')
   }
 
   // ── ② Shop ──────────────────────────────────────────────────────────────────
-  async function markBought(item, bought, price, qty) {
-    const patch = { bought, quantity: qty, price_paid: price ?? null, bought_at: bought ? new Date().toISOString() : null }
-    const { error } = await supabase.from('shopping_list_items').update(patch).eq('id', item.id)
-    if (error) { setMsg(error.message); return }
-    if (bought && item.ingredient_id) {
-      await supabase.from('ingredients').update({ has_any: true }).eq('id', item.ingredient_id)
-      // only log a price on the transition into "bought" (avoid dup rows on re-toggles)
-      if (!item.bought && price != null && !isNaN(price)) {
-        await supabase.from('ingredient_prices').insert({
-          ingredient_id: item.ingredient_id,
-          store_id: activeList?.store_id ?? null,
-          price, currency: 'GBP', source: 'shop',
-        })
-      }
-    }
-    setItems(prev => prev.map(i => i.id === item.id ? { ...i, ...patch } : i))
+  async function markBought(item, price, qty, unit) {
+    try {
+      const row = await recordPurchase({
+        houseId: house.id,
+        listId: activeList.id,
+        ingredientId: item.ingredient_id,
+        itemId: item.id,
+        quantity: qty,
+        price,
+        unitSizeUnit: unit,
+        storeId: activeList.store_id,
+        source: 'manual',
+      })
+      setItems(prev => prev.map(i => i.id === row.id ? row : i))
+      markStocked(item.ingredient_id)
+    } catch (e) { setMsg(e.message) }
   }
 
-  async function addToActiveList() {
-    const n = addName.trim()
-    if (!n || !activeList) return
-    const { data } = await supabase.from('shopping_list_items')
-      .insert({ house_id: house.id, list_id: activeList.id, ingredient_id: null, custom_name: n, quantity: 1, auto_generated: false, bought: false })
-      .select('*, ingredients(name), meals(name)').single()
-    if (data) setItems(prev => [...prev, data])
-    setAddName('')
-  }
-
-  function autofillFromReceipt() {
-    // TODO: not wired up yet. Plan: let the user upload/paste a receipt here
-    // (reuse the upload UI + `extractPrices()` from lib/ai.js, same as
-    // Receipts.jsx), passing this list's items as `knownIngredients` so the AI
-    // matches receipt lines against them. For each matched line, call
-    // markBought(item, true, matchedPrice, matchedQty) instead of requiring
-    // manual entry. Unmatched receipt lines can fall back to the existing
-    // Receipts.jsx flow (new ingredient / price log).
-    setReceiptNote("Receipt autofill isn't wired up yet — for now, fill in prices by hand below, or log the receipt in the Shops tab.")
+  async function undoBought(item) {
+    try {
+      const row = await undoPurchase(item)
+      setItems(prev => prev.map(i => i.id === row.id ? row : i))
+    } catch (e) { setMsg(e.message) }
   }
 
   async function removeItem(item) {
@@ -226,25 +226,64 @@ export default function Shopping() {
     setItems(prev => prev.filter(i => i.id !== item.id))
   }
 
+  // Adding to a shop in progress uses the very same browser as Build. Setting a
+  // quantity writes an unbought line straight onto the live list.
+  const liveQuantities = Object.fromEntries(items.filter(i => !i.bought).map(i => [i.ingredient_id, i.quantity]))
+
+  async function setLiveQty(ingredientId, qty) {
+    const existing = items.find(i => i.ingredient_id === ingredientId && !i.bought)
+    if (qty <= 0) {
+      if (existing) await removeItem(existing)
+      return
+    }
+    if (existing) {
+      const { data } = await supabase.from('shopping_list_items')
+        .update({ quantity: qty }).eq('id', existing.id)
+        .select('*, ingredients(name), meals(name)').single()
+      if (data) setItems(prev => prev.map(i => i.id === data.id ? data : i))
+      return
+    }
+    const { data, error } = await supabase.from('shopping_list_items')
+      .insert({
+        house_id: house.id, list_id: activeList.id, ingredient_id: ingredientId,
+        quantity: qty, auto_generated: false, bought: false, source: 'manual',
+      })
+      .select('*, ingredients(name), meals(name)').single()
+    if (error) { setMsg(error.message); return }
+    setItems(prev => [...prev, data])
+  }
+
+  // Receipt lines land as purchases on this list — same rows as ticking by hand.
+  function onReceiptPurchases(rows) {
+    setItems(prev => {
+      const byId = new Map(prev.map(i => [i.id, i]))
+      for (const r of rows) byId.set(r.id, r)
+      return [...byId.values()]
+    })
+    for (const r of rows) markStocked(r.ingredient_id)
+  }
+
   async function finishShop() {
-    const total = items.filter(i => i.bought).reduce((t, i) => t + (i.price_paid ? i.price_paid * i.quantity : 0), 0)
+    const raw = items.filter(i => i.bought).reduce((t, i) => t + (i.price_paid ? i.price_paid * i.quantity : 0), 0)
+    const total = Math.round(raw * 100) / 100
     await supabase.from('shopping_lists')
       .update({ status: 'done', completed_at: new Date().toISOString(), total_paid: total })
       .eq('id', activeList.id)
-    setActiveList(null); setItems([])
+    setActiveList(null); setItems([]); setShowReceipt(false); setReceiptOpened(false); setShowAddMore(false)
     setView('history')
     await load()
+    await loadHistory()
   }
 
   async function cancelShop() {
     if (!activeList) return
     await supabase.from('shopping_lists').delete().eq('id', activeList.id) // cascades items
-    setActiveList(null); setItems([])
+    setActiveList(null); setItems([]); setShowReceipt(false); setReceiptOpened(false); setShowAddMore(false)
     setView('build')
     await load()
   }
 
-  // ── render helpers (plain functions, inlined — no remounting) ────────────────
+  // ── render ──────────────────────────────────────────────────────────────────
   const subNav = () => (
     <div className="shop-nav">
       <span className="shop-nav-lbl">Shopping</span>
@@ -267,80 +306,60 @@ export default function Shopping() {
         </div>
       )
     }
-    const chosenCount = candidates.filter(c => picked[c.id]?.checked).length + oneOffs.length
+
+    const chosen = Object.entries(picked).filter(([, q]) => q > 0)
+    const est = chosen.reduce((t, [id, q]) => { const p = priceOf(+id); return p != null ? t + p * q : t }, 0)
+    const anyPriced = chosen.some(([id]) => priceOf(+id) != null)
+
     return (
       <>
         <div className="section-title"><h2>Make a shopping list</h2></div>
-        <p className="muted-note">Everything you're out of. Items you keep are ticked; not-kept ones are left off — change any of them.</p>
+        <p className="muted-note">
+          Your whole larder, grouped. What you're out of comes first; what you already have is dimmed
+          but still there. Set a quantity on anything you want — that's what puts it on the list.
+        </p>
 
-        <label>Shop (for price preview)
-          <select value={storeId} onChange={e => setStoreId(e.target.value)}>
-            <option value="">Any shop</option>
-            {stores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-          </select>
-        </label>
+        <div className="field-row">
+          <label>Shop
+            <select value={storeId} onChange={e => setStoreId(e.target.value)}>
+              <option value="">Any shop</option>
+              {stores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+          </label>
+          <label style={{ maxWidth: 170 }}>Date
+            <input type="date" value={shopDate} onChange={e => setShopDate(e.target.value)} />
+          </label>
+        </div>
 
-        {candidates.length === 0 && oneOffs.length === 0 && (
-          <p className="empty">Nothing is out of stock. Add a one-off below, or mark items missing in the Larder.</p>
+        <IngredientBrowser
+          houseId={house.id}
+          ingredients={ingredients}
+          categories={categories}
+          priceOf={priceOf}
+          mode="pick"
+          quantities={picked}
+          onQtyChange={setQty}
+          onToggleKeep={toggleKeep}
+          onSelect={setSelected}
+          onCreated={ing => setIngredients(prev =>
+            prev.some(i => i.id === ing.id) ? prev : [...prev, ing].sort((a, b) => a.name.localeCompare(b.name))
+          )}
+          keptOnlyDefault
+        />
+
+        {anyPriced && (
+          <p className="muted-note" style={{ marginTop: '.6rem' }}>
+            Estimated at {storeId ? stores.find(s => String(s.id) === storeId)?.name : 'the cheapest shop'}: <strong>£{est.toFixed(2)}</strong>
+            {' '}(items without a recorded price aren't counted)
+          </p>
         )}
 
-        <div style={{ marginTop: '.6rem' }}>
-          {candidates.map(c => {
-            const sel = picked[c.id] ?? {}
-            const price = priceFor(c.id)
-            return (
-              <div key={c.id} className="card" style={{ opacity: sel.checked ? 1 : .55 }}>
-                <input type="checkbox" checked={!!sel.checked} onChange={() => toggle(c.id)} aria-label={`Include ${c.name}`} />
-                <span className="name">{c.name}</span>
-                {!c.keep && <span className="pill gray" style={{ fontSize: '.7rem' }}>not kept</span>}
-                {sel.checked && (
-                  <span className="qty-step">
-                    <button type="button" onClick={() => setQty(c.id, (sel.qty ?? 1) - 1)} aria-label="Fewer">−</button>
-                    <span>{sel.qty ?? 1}</span>
-                    <button type="button" onClick={() => setQty(c.id, (sel.qty ?? 1) + 1)} aria-label="More">+</button>
-                  </span>
-                )}
-                <span className="meta" style={{ minWidth: 48, textAlign: 'right' }}>
-                  {price != null ? `£${(price * (sel.checked ? (sel.qty ?? 1) : 1)).toFixed(2)}` : '—'}
-                </span>
-              </div>
-            )
-          })}
-
-          {oneOffs.map((o, i) => (
-            <div key={`o${i}`} className="card">
-              <span className="name">{o.name}</span>
-              <span className="pill blue" style={{ fontSize: '.7rem' }}>one-off</span>
-              <button className="btn small secondary" onClick={() => setOneOffs(oneOffs.filter((_, j) => j !== i))}>✕</button>
-            </div>
-          ))}
-        </div>
-
-        <div className="field-row" style={{ marginTop: '.5rem' }}>
-          <label style={{ flex: 1 }}>Add a one-off item (not in your Larder)
-            <input value={oneOffName} onChange={e => setOneOffName(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addOneOff() } }}
-              placeholder="e.g. Birthday candles" />
-          </label>
-          <button className="btn small" type="button" style={{ marginTop: 22 }} onClick={addOneOff}>Add</button>
-        </div>
-
-        {(() => {
-          const est = candidates.filter(c => picked[c.id]?.checked)
-            .reduce((t, c) => { const p = priceFor(c.id); return p != null ? t + p * (picked[c.id].qty ?? 1) : t }, 0)
-          const anyPriced = candidates.some(c => picked[c.id]?.checked && priceFor(c.id) != null)
-          return anyPriced ? (
-            <p className="muted-note" style={{ marginTop: '.6rem' }}>
-              Estimated at {storeId ? stores.find(s => String(s.id) === storeId)?.name : 'the cheapest shop'}: <strong>£{est.toFixed(2)}</strong>
-              {' '}(items without a recorded price aren't counted)
-            </p>
-          ) : null
-        })()}
-
         {msg && <p className="msg err">{msg}</p>}
-        <button className="btn" style={{ marginTop: '.4rem' }} onClick={startShop} disabled={busy || chosenCount === 0}>
-          {busy ? <span className="spinner" /> : `Start shop → (${chosenCount})`}
-        </button>
+        <div className="shop-sticky-action">
+          <button className="btn" onClick={startShop} disabled={busy || chosen.length === 0}>
+            {busy ? <span className="spinner" /> : `Start shop → (${chosen.length})`}
+          </button>
+        </div>
       </>
     )
   }
@@ -354,6 +373,7 @@ export default function Shopping() {
     }
     const done = items.filter(i => i.bought).length
     const spent = items.filter(i => i.bought).reduce((t, i) => t + (i.price_paid ? i.price_paid * i.quantity : 0), 0)
+
     return (
       <>
         <div className="section-title">
@@ -364,24 +384,62 @@ export default function Shopping() {
           <span className="fbar-fill" style={{ width: `${items.length ? done / items.length * 100 : 0}%` }} />
         </div>
         <p className="muted-note">
-          Tap <strong>Bought</strong> as it goes in the trolley — enter what you paid and it drops back into your Larder.
-          Or record the whole shop from a receipt in the <strong>Shops</strong> tab.
+          Tap <strong>Bought</strong> as it goes in the trolley — what you paid is logged against
+          {activeList.stores?.name ? ` ${activeList.stores.name}` : ' the shop'} and it drops back into your Larder.
+          Or scan the receipt at the end and let it fill the whole shop in.
         </p>
+
         <div className="btn-row" style={{ marginBottom: '.6rem' }}>
-          <button className="btn small secondary" onClick={autofillFromReceipt}>📷 Autofill from receipt</button>
+          <button
+            className={`btn small ${showReceipt ? '' : 'secondary'}`}
+            onClick={() => { setReceiptOpened(true); setShowReceipt(v => !v) }}
+          >
+            🧾 {showReceipt ? 'Hide receipt' : 'Fill from receipt'}
+          </button>
+          <button className={`btn small ${showAddMore ? '' : 'secondary'}`} onClick={() => setShowAddMore(v => !v)}>
+            {showAddMore ? 'Done adding' : '+ Add more items'}
+          </button>
         </div>
-        {receiptNote && <p className="muted-note">{receiptNote}</p>}
 
-        {items.map(item => <ShopRow key={item.id} item={item} onBought={markBought} onRemove={removeItem} />)}
+        {/* Stays mounted once opened: collapsing it must not throw away a scan
+            the user has already paid an AI call for. */}
+        {receiptOpened && (
+          <div className="receipt-inline" style={showReceipt ? undefined : { display: 'none' }}>
+            <Receipts
+              mode="attach"
+              listId={activeList.id}
+              lockedStoreId={activeList.store_id}
+              onPurchases={onReceiptPurchases}
+            />
+          </div>
+        )}
 
-        <div className="field-row" style={{ marginTop: '.5rem' }}>
-          <label style={{ flex: 1 }}>Forgot something? Add it
-            <input value={addName} onChange={e => setAddName(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addToActiveList() } }}
-              placeholder="e.g. Milk" />
-          </label>
-          <button className="btn small" type="button" style={{ marginTop: 22 }} onClick={addToActiveList}>Add</button>
-        </div>
+        {showAddMore && (
+          <div className="receipt-inline">
+            <IngredientBrowser
+              houseId={house.id}
+              ingredients={ingredients}
+              categories={categories}
+              priceOf={priceOf}
+              mode="pick"
+              quantities={liveQuantities}
+              onQtyChange={setLiveQty}
+              onToggleKeep={toggleKeep}
+              onSelect={setSelected}
+              onCreated={ing => setIngredients(prev =>
+                prev.some(i => i.id === ing.id) ? prev : [...prev, ing].sort((a, b) => a.name.localeCompare(b.name))
+              )}
+              keptOnlyDefault
+            />
+          </div>
+        )}
+
+        {msg && <p className="msg err">{msg}</p>}
+
+        {items.length === 0 && <p className="empty">Nothing on this list yet — add some items above.</p>}
+        {items.map(item => (
+          <ShopRow key={item.id} item={item} onBought={markBought} onUndo={undoBought} onRemove={removeItem} />
+        ))}
 
         <hr className="divider" />
         <div className="section-title">
@@ -402,26 +460,40 @@ export default function Shopping() {
         {history.length === 0 && <p className="empty">No finished shops yet.</p>}
         {history.map(h => {
           const count = h.shopping_list_items?.[0]?.count ?? 0
-          const date = h.completed_at ? new Date(h.completed_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: '2-digit' }) : ''
+          const when = h.purchased_on ?? h.completed_at
+          const date = when
+            ? new Date(when).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: '2-digit' })
+            : ''
           const isOpen = expandedHist === h.id
           const hItems = histItems[h.id]
+          const stated = h.receipt_total != null ? Number(h.receipt_total) : null
+          const ours = Number(h.total_paid ?? 0)
+          const mismatch = stated != null && Math.abs(stated - ours) >= 0.01
+
           return (
             <div key={h.id}>
               <div className="card card--clickable" onClick={() => toggleHistExpand(h.id)}>
                 <span className="name">{h.stores?.name ?? 'Mixed'}</span>
                 <span className="meta">{date} · {count} item{count === 1 ? '' : 's'}</span>
-                <span className="pill green">£{Number(h.total_paid ?? 0).toFixed(2)}</span>
+                {h.source === 'receipt' && <span className="pill gray" style={{ fontSize: '.7rem' }}>🧾 receipt</span>}
+                <span className="pill green">£{ours.toFixed(2)}</span>
                 <span className="meta">{isOpen ? '▲' : '▼'}</span>
               </div>
               {isOpen && (
-                <div style={{ margin: '0 0 .6rem .8rem', paddingLeft: '.6rem', borderLeft: '2px solid var(--color-border)' }}>
+                <div className="hist-detail">
+                  {mismatch && (
+                    <p className="muted-note">
+                      Receipt said £{stated.toFixed(2)} — £{Math.abs(stated - ours).toFixed(2)}{' '}
+                      {stated > ours ? 'more than' : 'less than'} the items add up to.
+                    </p>
+                  )}
                   {hItems === undefined && <p className="empty">Loading…</p>}
                   {hItems?.length === 0 && <p className="empty">No items recorded.</p>}
                   {hItems?.map(item => (
                     <div key={item.id} className="card" style={{ opacity: item.bought ? 1 : .6 }}>
                       <span className="name">{itemName(item)}</span>
                       {item.meals?.name && <span className="pill blue" style={{ fontSize: '.7rem' }}>🍲 {item.meals.name}</span>}
-                      <span className="meta">×{item.quantity}</span>
+                      <span className="meta">×{item.quantity}{item.unit_size_unit ? ` · ${item.unit_size_unit}` : ''}</span>
                       {!item.bought && <span className="pill gray" style={{ fontSize: '.7rem' }}>not bought</span>}
                       {item.bought && item.price_paid != null && (
                         <span className="meta">£{Number(item.price_paid).toFixed(2)} each · £{(item.price_paid * item.quantity).toFixed(2)}</span>
@@ -443,6 +515,24 @@ export default function Shopping() {
       {loading
         ? <p className="empty">Loading…</p>
         : (view === 'build' ? buildView() : view === 'shop' ? shopView() : historyView())}
+
+      {selected && (
+        <IngredientPanel
+          ing={selected}
+          houseId={house.id}
+          categories={categories}
+          onClose={() => setSelected(null)}
+          onUpdated={updated => {
+            setIngredients(prev => prev.map(i => i.id === updated.id ? { ...i, ...updated } : i))
+            setSelected(updated)
+          }}
+          onCategoriesChanged={cat => setCategories(prev => prev.some(c => c.id === cat.id) ? prev : [...prev, cat].sort((a, b) => a.name.localeCompare(b.name)))}
+          onCategoryDeleted={cat => {
+            setCategories(prev => prev.filter(c => c.id !== cat.id))
+            setIngredients(prev => prev.map(i => ({ ...i, categoryIds: (i.categoryIds ?? []).filter(x => x !== cat.id) })))
+          }}
+        />
+      )}
     </>
   )
 }

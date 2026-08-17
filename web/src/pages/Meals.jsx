@@ -241,7 +241,12 @@ function PlanModal({ meal, houseId, onClose, onSaved }) {
         .order('created_at', { ascending: false }).limit(1).maybeSingle()
       if (!list) {
         const { data: created, error: listErr } = await supabase.from('shopping_lists')
-          .insert({ house_id: houseId, status: 'shopping' }).select('id').single()
+          .insert({
+            house_id: houseId,
+            status: 'shopping',
+            source: 'manual',
+            purchased_on: new Date().toISOString().slice(0, 10),
+          }).select('id').single()
         if (listErr) { setErr(listErr.message); setSaving(false); return }
         list = created
       }

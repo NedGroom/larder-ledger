@@ -41,6 +41,9 @@ export const defaultReceiptSession = {
   aiFees:         [],    // [{ description, amount }]
   aiDiscounts:    [],    // [{ description, amount }]
   aiReceiptTotal: null,  // number | null
+  aiStoreName:    null,  // shop name read off the receipt
+  purchaseDate:   null,  // 'YYYY-MM-DD' — when the shop happened
+  receiptListId:  null,  // the shopping_lists row this receipt is filling
   // Settlement flow
   savedItems:     [],    // rows that have been saved (for settlement)
   showSettlement: false,

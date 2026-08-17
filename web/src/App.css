@@ -617,3 +617,90 @@ hr.divider { border: none; border-top: 1px solid #ebebeb; margin: 1rem 0; }
 .receipt-panel { border: 1px solid var(--color-border); border-radius: 10px; background: var(--color-surface); padding: .3rem .6rem; }
 .receipt-panel > summary { cursor: pointer; font-weight: 600; padding: .5rem .2rem; list-style: none; }
 .receipt-panel > summary::-webkit-details-marker { display: none; }
+
+/* ── Larder browser (shared by the Larder tab and the list builder) ── */
+.larder-browser { margin-top: .4rem; }
+
+.larder-search-row { display: flex; gap: .5rem; align-items: center; margin-bottom: .5rem; }
+.larder-search { flex: 1; margin: 0; }
+.larder-search-row .btn { white-space: nowrap; }
+
+.larder-create {
+  display: block; width: 100%; text-align: left;
+  border: 1px dashed var(--color-accent); border-radius: 8px;
+  background: transparent; color: var(--color-accent);
+  padding: .6rem .8rem; margin-bottom: .5rem;
+  font: inherit; font-size: .85rem; cursor: pointer;
+}
+.larder-create:hover { background: rgba(0,0,0,.03); }
+
+.larder-section { margin-bottom: .9rem; }
+.larder-section-header {
+  position: sticky; top: 0; z-index: 2;
+  display: flex; align-items: center; gap: .5rem; width: 100%;
+  padding: .4rem .2rem; border: none; border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg); color: var(--color-text);
+  font: inherit; cursor: pointer; text-align: left;
+}
+.larder-section-name { font-weight: 700; font-size: .82rem; text-transform: uppercase; letter-spacing: .06em; flex: 1; }
+.larder-section-meta { display: inline-flex; align-items: center; gap: .35rem; }
+.larder-section-meta .pill { font-size: .68rem; }
+.larder-section-chevron { font-size: .7rem; color: var(--color-text-muted); }
+.larder-hidden-note { margin-top: .6rem; font-style: italic; }
+
+/* What the house is out of stays bright; what it has fades back but stays usable. */
+.ing-card { transition: opacity .15s ease, border-color .15s ease; }
+.ing-card--stocked { opacity: .55; }
+.ing-card--stocked:hover { opacity: .85; }
+.ing-card--wanted { opacity: 1; }
+.ing-card--picked {
+  opacity: 1;
+  box-shadow: inset 3px 0 0 var(--color-accent), 0 1px 3px rgba(0,0,0,.07);
+}
+.ing-card-price { font-variant-numeric: tabular-nums; }
+.ing-card-each { opacity: .7; }
+.ing-card-control { display: inline-flex; align-items: center; }
+
+.qty-add {
+  width: 1.9rem; height: 1.9rem; border-radius: 8px;
+  border: 1px solid var(--color-accent); background: transparent; color: var(--color-accent);
+  font: inherit; font-size: 1.1rem; line-height: 1; cursor: pointer;
+}
+.qty-add:hover { background: var(--color-accent); color: #fff; }
+
+.larder-add-form { background: var(--color-surface); border-radius: 10px; padding: .9rem 1rem; margin-bottom: .6rem; }
+
+.shop-sticky-action { position: sticky; bottom: .5rem; margin-top: .8rem; }
+.shop-sticky-action .btn { width: 100%; }
+
+/* ── Categories ─────────────────────────────────────────────────────── */
+.cat-picker { margin-top: .3rem; }
+.cat-chip-row { display: flex; flex-wrap: wrap; gap: .35rem; margin-bottom: .4rem; }
+.cat-chip {
+  display: inline-flex; align-items: center; gap: .25rem;
+  padding: 3px 10px; border-radius: 12px; font-size: .75rem; font-weight: 600;
+  border: 1px solid var(--color-border); background: var(--color-surface);
+  color: var(--color-text-muted); cursor: pointer; font-family: inherit;
+}
+.cat-chip--on { background: var(--color-accent); border-color: var(--color-accent); color: #fff; }
+.cat-chip--manage { border-style: dashed; }
+.cat-chip-label { border: none; background: none; color: inherit; font: inherit; padding: 0; cursor: pointer; }
+.cat-chip-del { border: none; background: none; color: inherit; font: inherit; padding: 0 0 0 .1rem; cursor: pointer; opacity: .7; }
+.cat-chip-del:hover { opacity: 1; }
+.cat-add-row { display: flex; gap: .4rem; align-items: center; }
+.cat-add-row input { margin: 0; flex: 1; }
+
+.ing-panel-hint { font-size: .77rem; color: var(--color-text-muted); margin: 0 0 .4rem; }
+
+/* ── Shop history detail ────────────────────────────────────────────── */
+.hist-detail { margin: 0 0 .6rem .8rem; padding-left: .6rem; border-left: 2px solid var(--color-border); }
+
+/* ── Inline receipt / add-more panels inside a shop ─────────────────── */
+.receipt-inline {
+  border: 1px solid var(--color-border); border-radius: 10px;
+  background: var(--color-surface); padding: .75rem .9rem; margin-bottom: .8rem;
+}
+.receipt-shop-confirm {
+  border: 1px solid var(--color-border); border-radius: 8px;
+  padding: .6rem .8rem; margin-bottom: .75rem;
+}
