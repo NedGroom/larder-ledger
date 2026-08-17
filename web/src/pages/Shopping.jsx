@@ -51,6 +51,8 @@ export default function Shopping() {
   const [activeList, setActiveList] = useState(null)  // {id, store_id, status, stores?}
   const [items, setItems] = useState([])              // items of the active list
   const [history, setHistory] = useState([])
+  const [histItems, setHistItems] = useState({})      // list_id → items[] (loaded on expand)
+  const [expandedHist, setExpandedHist] = useState(null) // list_id currently expanded, or null
 
   // build-screen local state
   const [picked, setPicked] = useState({})            // ingredient_id → { checked, qty }
@@ -60,6 +62,7 @@ export default function Shopping() {
   const [storeId, setStoreId] = useState('')
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState('')
+  const [receiptNote, setReceiptNote] = useState('')
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -123,6 +126,19 @@ export default function Shopping() {
     setHistory(data ?? [])
   }, [house.id])
   useEffect(() => { if (view === 'history') loadHistory() }, [view, loadHistory])
+
+  async function toggleHistExpand(listId) {
+    if (expandedHist === listId) { setExpandedHist(null); return }
+    setExpandedHist(listId)
+    if (!histItems[listId]) {
+      const { data } = await supabase
+        .from('shopping_list_items')
+        .select('*, ingredients(name), meals(name)')
+        .eq('list_id', listId)
+        .order('created_at', { ascending: true })
+      setHistItems(prev => ({ ...prev, [listId]: data ?? [] }))
+    }
+  }
 
   // ── ① Build ─────────────────────────────────────────────────────────────────
   const toggle = id => setPicked(p => ({ ...p, [id]: { ...p[id], checked: !p[id]?.checked } }))
@@ -192,6 +208,17 @@ export default function Shopping() {
       .select('*, ingredients(name), meals(name)').single()
     if (data) setItems(prev => [...prev, data])
     setAddName('')
+  }
+
+  function autofillFromReceipt() {
+    // TODO: not wired up yet. Plan: let the user upload/paste a receipt here
+    // (reuse the upload UI + `extractPrices()` from lib/ai.js, same as
+    // Receipts.jsx), passing this list's items as `knownIngredients` so the AI
+    // matches receipt lines against them. For each matched line, call
+    // markBought(item, true, matchedPrice, matchedQty) instead of requiring
+    // manual entry. Unmatched receipt lines can fall back to the existing
+    // Receipts.jsx flow (new ingredient / price log).
+    setReceiptNote("Receipt autofill isn't wired up yet — for now, fill in prices by hand below, or log the receipt in the Shops tab.")
   }
 
   async function removeItem(item) {
@@ -340,6 +367,10 @@ export default function Shopping() {
           Tap <strong>Bought</strong> as it goes in the trolley — enter what you paid and it drops back into your Larder.
           Or record the whole shop from a receipt in the <strong>Shops</strong> tab.
         </p>
+        <div className="btn-row" style={{ marginBottom: '.6rem' }}>
+          <button className="btn small secondary" onClick={autofillFromReceipt}>📷 Autofill from receipt</button>
+        </div>
+        {receiptNote && <p className="muted-note">{receiptNote}</p>}
 
         {items.map(item => <ShopRow key={item.id} item={item} onBought={markBought} onRemove={removeItem} />)}
 
@@ -372,11 +403,33 @@ export default function Shopping() {
         {history.map(h => {
           const count = h.shopping_list_items?.[0]?.count ?? 0
           const date = h.completed_at ? new Date(h.completed_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: '2-digit' }) : ''
+          const isOpen = expandedHist === h.id
+          const hItems = histItems[h.id]
           return (
-            <div key={h.id} className="card">
-              <span className="name">{h.stores?.name ?? 'Mixed'}</span>
-              <span className="meta">{date} · {count} item{count === 1 ? '' : 's'}</span>
-              <span className="pill green">£{Number(h.total_paid ?? 0).toFixed(2)}</span>
+            <div key={h.id}>
+              <div className="card card--clickable" onClick={() => toggleHistExpand(h.id)}>
+                <span className="name">{h.stores?.name ?? 'Mixed'}</span>
+                <span className="meta">{date} · {count} item{count === 1 ? '' : 's'}</span>
+                <span className="pill green">£{Number(h.total_paid ?? 0).toFixed(2)}</span>
+                <span className="meta">{isOpen ? '▲' : '▼'}</span>
+              </div>
+              {isOpen && (
+                <div style={{ margin: '0 0 .6rem .8rem', paddingLeft: '.6rem', borderLeft: '2px solid var(--color-border)' }}>
+                  {hItems === undefined && <p className="empty">Loading…</p>}
+                  {hItems?.length === 0 && <p className="empty">No items recorded.</p>}
+                  {hItems?.map(item => (
+                    <div key={item.id} className="card" style={{ opacity: item.bought ? 1 : .6 }}>
+                      <span className="name">{itemName(item)}</span>
+                      {item.meals?.name && <span className="pill blue" style={{ fontSize: '.7rem' }}>🍲 {item.meals.name}</span>}
+                      <span className="meta">×{item.quantity}</span>
+                      {!item.bought && <span className="pill gray" style={{ fontSize: '.7rem' }}>not bought</span>}
+                      {item.bought && item.price_paid != null && (
+                        <span className="meta">£{Number(item.price_paid).toFixed(2)} each · £{(item.price_paid * item.quantity).toFixed(2)}</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )
         })}
