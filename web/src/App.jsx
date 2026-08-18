@@ -55,6 +55,7 @@ export default function App() {
   const [userRow, setUserRow] = useState(null)
   const [tab, setTab] = useState('pantry')
   const [receiptSession, setReceiptSession] = useState(defaultReceiptSession)
+  const [initErr, setInitErr] = useState('')
 
   useEffect(() => { loadTheme() }, [])
 
@@ -67,21 +68,28 @@ export default function App() {
 
   // ── User row + house lookup (no auto-create) ────────────────────────────────
   useEffect(() => {
-    if (!session) { setHouse(null); setUserRow(null); return }
+    if (!session) { setHouse(null); setUserRow(null); setInitErr(''); return }
     async function initUser() {
       const userId = session.user.id
 
-      // Upsert into public.users
-      const { data: uRow } = await supabase
+      // Upsert into public.users.
+      // `select('*')` rather than naming columns: naming one the database
+      // hasn't got yet fails the whole query, and the app then sat on
+      // "Loading…" for ever with nothing said. Take whatever exists.
+      const { data: uRow, error: uErr } = await supabase
         .from('users')
         .upsert(
           { auth_uid: userId, email: session.user.email, name: session.user.user_metadata?.full_name },
           { onConflict: 'auth_uid' }
         )
-        .select('id, name, email, target_kcal, target_protein_g, target_fibre_g')
+        .select('*')
         .single()
 
-      if (!uRow) return
+      if (uErr || !uRow) {
+        setInitErr(uErr?.message || 'Could not load your account.')
+        return
+      }
+      setInitErr('')
       setUserRow(uRow)
 
       // Find existing house membership
@@ -103,6 +111,22 @@ export default function App() {
   // ── Loading / signed-out states ─────────────────────────────────────────────
   if (session === undefined) return <div className="loading">Loading…</div>
   if (!session) return <SignIn />
+
+  // Never spin for ever: if the account can't be read, say why. Nine times out
+  // of ten it's a migration that hasn't been applied to this database yet.
+  if (initErr) {
+    return (
+      <div className="loading">
+        <p className="msg err" style={{ maxWidth: 460 }}>{initErr}</p>
+        <p className="muted-note" style={{ maxWidth: 460 }}>
+          If this mentions a missing column or table, the database is behind the app:
+          run <code>supabase db push</code> and apply <code>policies.sql</code>.
+        </p>
+        <button className="btn small secondary" onClick={() => window.location.reload()}>Try again</button>
+        <button className="btn small secondary" onClick={() => supabase.auth.signOut()}>Sign out</button>
+      </div>
+    )
+  }
   if (!userRow) return <div className="loading">Loading…</div>
   // No house yet — show picker
   if (!house) return <HousePicker userRow={userRow} onJoined={h => setHouse(h)} />
