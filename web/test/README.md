@@ -29,7 +29,7 @@ printf 'VITE_SUPABASE_URL=http://127.0.0.1:9999\nVITE_SUPABASE_ANON_KEY=test\n' 
 npm run dev &
 npm i --no-save playwright
 
-for t in larder-and-shop receipt-as-shop receipt-fills-shop planner dishes; do
+for t in larder-and-shop receipt-as-shop receipt-fills-shop planner dishes prices; do
   node test/$t.test.mjs
 done
 ```
@@ -49,6 +49,7 @@ isn't right for your machine.
 | `receipt-fills-shop.test.mjs` | A receipt scanned mid-shop filling the list already in progress |
 | `planner.test.mjs` | The deck, adding to a cook, placing servings, the analyse view, and handing off to a shop |
 | `dishes.test.mjs` | Authoring a dish with computable quantities, and the plan-a-dish shortcut |
+| `prices.test.mjs` | The ingredient panel's price comparison: ranked cheapest per unit, product labels, history |
 | `planner-math.test.mjs` | The planner's arithmetic as pure functions (overlapping periods, scaling, nutrition, card debits) |
 
 ## A caveat worth knowing

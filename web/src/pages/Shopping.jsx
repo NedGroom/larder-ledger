@@ -28,6 +28,7 @@ function ShopRow({ item, onBought, onUndo, onRemove }) {
   const [price, setPrice] = useState(item.price_paid ?? '')
   const [qty, setQty] = useState(item.quantity ?? 1)
   const [unit, setUnit] = useState(item.unit_size_unit ?? '')
+  const [label, setLabel] = useState('')
 
   return (
     <div className="card" style={{ flexWrap: 'wrap', opacity: item.bought ? .7 : 1 }}>
@@ -36,7 +37,7 @@ function ShopRow({ item, onBought, onUndo, onRemove }) {
       {item.source === 'receipt-ai' && <span className="pill gray" style={{ fontSize: '.7rem' }}>🧾 receipt</span>}
       <span className="meta">×{item.quantity}</span>
       {!item.bought
-        ? <button className="btn small" onClick={() => onBought(item, price, qty, unit)}>Bought</button>
+        ? <button className="btn small" onClick={() => onBought(item, price, qty, unit, label)}>Bought</button>
         : <button className="btn small secondary" onClick={() => onUndo(item)}>Undo</button>}
       {!item.bought && <button className="btn small secondary" title="Remove from list" onClick={() => onRemove(item)}>✕</button>}
       {!item.bought && (
@@ -47,6 +48,9 @@ function ShopRow({ item, onBought, onUndo, onRemove }) {
           <input type="number" min="1" value={qty} onChange={e => setQty(e.target.value)} style={{ width: 52 }} />
           <span className="meta">pack</span>
           <input value={unit} onChange={e => setUnit(e.target.value)} placeholder="500g" style={{ width: 64 }} />
+          <input value={label} onChange={e => setLabel(e.target.value)}
+            placeholder="which one? e.g. 5% fat" title="Which product this was — shown in the price comparison"
+            style={{ flex: 1, minWidth: 120 }} />
         </div>
       )}
       {item.bought && item.price_paid != null && (
@@ -263,7 +267,7 @@ export default function Shopping() {
   }
 
   // ── ② Shop ──────────────────────────────────────────────────────────────────
-  async function markBought(item, price, qty, unit) {
+  async function markBought(item, price, qty, unit, label) {
     try {
       const row = await recordPurchase({
         houseId: house.id,
@@ -273,6 +277,7 @@ export default function Shopping() {
         quantity: qty,
         price,
         unitSizeUnit: unit,
+        label,
         storeId: activeList.store_id,
         source: 'manual',
       })

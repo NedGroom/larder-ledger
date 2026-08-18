@@ -74,6 +74,12 @@ check('the unknown item became a remembered ingredient',
 check('prices were logged for both', db.ingredient_prices.length === 2)
 check('prices carry a canonical rate', db.ingredient_prices.every(p => p.canonical_rate != null))
 check('prices are attributed to the shop', db.ingredient_prices.every(p => p.store_id === 1))
+// The receipt knows the product; that wording must survive onto the price row,
+// or the comparison can't tell two products under one ingredient apart.
+check('the receipt line names the product on the price row',
+      db.ingredient_prices.some(p => p.label === 'TOMATOES 400G') &&
+      db.ingredient_prices.some(p => p.label === 'MARMITE 250G'),
+      JSON.stringify(db.ingredient_prices.map(p => p.label)))
 check('bought items are back in stock', db.ingredients.every(i => i.has_any === true))
 
 // A finished receipt must not occupy the "one shop at a time" slot.

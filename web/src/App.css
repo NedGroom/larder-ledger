@@ -880,3 +880,20 @@ hr.divider { border: none; border-top: 1px solid #ebebeb; margin: 1rem 0; }
 .nutrient-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); gap: .4rem; margin: .4rem 0; }
 .nutrient-grid label { margin: 0; font-size: .75rem; }
 .nutrient-grid input { margin: 0; }
+
+/* ── Price comparison, cheapest per unit first ──────────────────────── */
+.price-row {
+  display: flex; align-items: center; gap: .5rem; flex-wrap: wrap;
+  padding: .4rem .5rem; border-radius: 6px; margin-bottom: .25rem;
+  background: var(--color-surface2);
+}
+.price-row--best { box-shadow: inset 3px 0 0 var(--color-accent); }
+.price-row-rate { font-weight: 700; font-variant-numeric: tabular-nums; min-width: 92px; }
+.price-row-what { flex: 1; min-width: 130px; display: flex; flex-direction: column; gap: 1px; }
+.price-row-what input { margin: 0; font-size: .82rem; padding: 2px 5px; }
+.price-row-label {
+  background: none; border: none; padding: 0; font: inherit; font-size: .85rem; font-weight: 600;
+  color: inherit; cursor: text; text-align: left;
+}
+.price-row-label:hover { text-decoration: underline dotted; }
+.price-row-price { font-variant-numeric: tabular-nums; }

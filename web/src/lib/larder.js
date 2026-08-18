@@ -191,7 +191,7 @@ export async function setIngredientCategories(ingredientId, categoryIds) {
  *     the buy wasn't planned (you picked it up anyway, or the receipt knew
  *     about something the list didn't),
  *   - logs the price against the shop, with a canonical rate where the pack
- *     size makes one calculable,
+ *     size makes one calculable, and the product label if one is known,
  *   - puts the ingredient back in stock,
  *   - remembers which price row it wrote, so undoing the buy can retract it.
  *
@@ -199,7 +199,7 @@ export async function setIngredientCategories(ingredientId, categoryIds) {
  */
 export async function recordPurchase({
   houseId, listId, ingredientId, itemId = null, quantity = 1, price = null,
-  unitSizeUnit = null, forUserId = null, storeId = null, source = 'manual',
+  unitSizeUnit = null, label = null, forUserId = null, storeId = null, source = 'manual',
 }) {
   const qty = Math.max(1, Number(quantity) || 1)
   const unitPrice = price === '' || price == null || isNaN(Number(price)) ? null : Number(price)
@@ -219,6 +219,10 @@ export async function recordPurchase({
         ingredient_id: ingredientId,
         store_id: storeId ? Number(storeId) : null,
         price: unitPrice,
+        // Which product this actually was — "large, free range", "5% fat".
+        // Without it, two very different things under one ingredient are
+        // indistinguishable in the price comparison.
+        label: (label ?? '').trim() || null,
         unit_size_unit: unitSizeUnit || null,
         canonical_rate: rate,
         canonical_rate_unit: rate != null ? rateUnit : null,

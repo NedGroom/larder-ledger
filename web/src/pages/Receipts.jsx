@@ -219,6 +219,8 @@ function CandidateTable({ candidates, ingredients, houseMembers, houseId, storeI
         quantity: row.quantity,
         price: +row.price,
         unitSizeUnit: row.unit,
+        // The receipt's own wording for the product, e.g. "BEEF MINCE 5% 500G".
+        label: row.description,
         forUserId: row.for_user_id || null,
         storeId,
         source: 'receipt-ai',

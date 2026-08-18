@@ -131,10 +131,12 @@ CREATE TABLE ingredient_prices (
   id BIGSERIAL PRIMARY KEY,
   ingredient_id BIGINT NOT NULL REFERENCES ingredients(id) ON DELETE CASCADE,
   store_id BIGINT NOT NULL REFERENCES stores(id) ON DELETE CASCADE,
-  price NUMERIC NOT NULL,
-  unit_size NUMERIC,
-  unit_size_unit TEXT,
-  price_per_canonical NUMERIC,
+  price NUMERIC NOT NULL,          -- per pack, as paid
+  label TEXT,                      -- which product: "large, free range", "5% fat"
+  unit_size NUMERIC,               -- legacy, unused
+  unit_size_unit TEXT,             -- pack as written: "500g", "6pk"
+  canonical_rate NUMERIC,          -- price per canonical_rate_unit, for comparing
+  canonical_rate_unit TEXT,
   currency TEXT DEFAULT 'GBP',
   source TEXT,
   noted_at TIMESTAMPTZ DEFAULT now(),

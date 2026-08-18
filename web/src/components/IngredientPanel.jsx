@@ -4,118 +4,111 @@ import { calcCanonicalRate, formatRate } from '../lib/units.js'
 import { findOrCreateCategory, setIngredientCategories } from '../lib/larder.js'
 import { NUTRIENTS } from '../lib/planner.js'
 
-// ── Store comparison ──────────────────────────────────────────────────────────
-function StoreComparison({ prices }) {
-  const [expanded, setExpanded] = useState({}) // storeId → bool
+// ── Price comparison ──────────────────────────────────────────────────────────
+/**
+ * Every product you've bought under this ingredient, cheapest per unit first.
+ *
+ * "Current" means the most recent price for each distinct product — a different
+ * label, pack size or shop is a different product, so 6 large eggs and 12
+ * medium sit side by side and can be compared honestly, rather than one hiding
+ * the other behind an average.
+ */
+function PriceComparison({ prices, onRelabel }) {
+  const [showHistory, setShowHistory] = useState(false)
+  const [editing, setEditing] = useState(null)   // price id being relabelled
+  const [draft, setDraft] = useState('')
 
   if (!prices?.length) return null
 
-  // Group all prices by store
-  const byStore = {}
+  const key = p => `${p.store_id ?? '_'}|${(p.label ?? '').toLowerCase()}|${p.unit_size_unit ?? ''}`
+
+  const currentMap = {}
   for (const p of prices) {
-    const sid = p.store_id ?? '__none__'
-    const sname = p.stores?.name ?? '—'
-    if (!byStore[sid]) byStore[sid] = { id: sid, name: sname, prices: [] }
-    byStore[sid].prices.push(p)
+    const k = key(p)
+    if (!currentMap[k] || new Date(p.noted_at) > new Date(currentMap[k].noted_at)) currentMap[k] = p
   }
 
-  // For each store: "current" prices = most recent per distinct pack size.
-  // best_rate and cheapest are derived from those only.
-  const stores = Object.values(byStore).map(store => {
-    const currentMap = {}
-    for (const p of store.prices) {
-      const key = p.unit_size_unit || '__no_unit__'
-      if (!currentMap[key] || new Date(p.noted_at) > new Date(currentMap[key].noted_at)) {
-        currentMap[key] = p
-      }
-    }
-    const current = Object.values(currentMap)
-
-    const withRate = current.filter(p => p.canonical_rate != null)
-    const bestRateEntry = withRate.length
-      ? withRate.reduce((a, b) => Number(a.canonical_rate) <= Number(b.canonical_rate) ? a : b)
-      : null
-
-    const cheapestEntry = current.length
-      ? current.reduce((a, b) => Number(a.price) <= Number(b.price) ? a : b)
-      : null
-
-    return {
-      ...store,
-      current,
-      bestRateEntry,
-      cheapestEntry,
-      bestRate: bestRateEntry ? Number(bestRateEntry.canonical_rate) : Infinity,
-      cheapestPrice: cheapestEntry ? Number(cheapestEntry.price) : Infinity,
-    }
+  // Cheapest per unit first; anything with no comparable rate sinks to the
+  // bottom rather than pretending to be free.
+  const current = Object.values(currentMap).sort((a, b) => {
+    const ra = a.canonical_rate != null ? Number(a.canonical_rate) : Infinity
+    const rb = b.canonical_rate != null ? Number(b.canonical_rate) : Infinity
+    if (ra !== rb) return ra - rb
+    return Number(a.price) - Number(b.price)
   })
 
-  const bestRateStore = stores.reduce((a, b) => a.bestRate <= b.bestRate ? a : b)
-  const cheapestStore = stores.reduce((a, b) => a.cheapestPrice <= b.cheapestPrice ? a : b)
-  const sameStore     = bestRateStore.id === cheapestStore.id
+  const best = current.find(p => p.canonical_rate != null)
+  const history = [...prices].sort((a, b) => new Date(b.noted_at) - new Date(a.noted_at))
 
-  const sorted = [...stores].sort((a, b) => {
-    if (a.bestRate !== b.bestRate) return a.bestRate - b.bestRate
-    if (a.cheapestPrice !== b.cheapestPrice) return a.cheapestPrice - b.cheapestPrice
-    return a.name.localeCompare(b.name)
-  })
-
-  function badges(store) {
-    const tags = []
-    if (store.id === bestRateStore.id)               tags.push({ label: '🏆 Best rate', cls: 'badge--gold' })
-    if (!sameStore && store.id === cheapestStore.id) tags.push({ label: '💰 Cheapest', cls: 'badge--green' })
-    return tags
+  async function saveLabel(p) {
+    await onRelabel(p, draft)
+    setEditing(null)
   }
 
   return (
     <div className="ing-panel-section">
-      <div className="ing-panel-label">Store comparison</div>
-      {sorted.map(store => {
-        const isOpen = expanded[store.id]
-        const tags = badges(store)
-        const history = [...store.prices].sort((a, b) => new Date(b.noted_at) - new Date(a.noted_at))
+      <div className="ing-panel-label">Prices — cheapest per unit first</div>
+      {!best && (
+        <p className="ing-panel-hint">
+          No comparable rates yet. Set this ingredient's canonical rate unit below
+          (e.g. <code>unit</code> for eggs, <code>100g</code> for mince) and record pack
+          sizes, and these will sort by price per unit.
+        </p>
+      )}
 
-        return (
-          <div key={store.id} className={`store-cmp-card ${tags.length ? 'store-cmp-card--featured' : ''}`}>
-            <button
-              className="store-cmp-header"
-              onClick={() => setExpanded(prev => ({ ...prev, [store.id]: !prev[store.id] }))}
-            >
-              <span className="store-cmp-name">{store.name}</span>
-              <span className="store-cmp-badges">
-                {tags.map(t => <span key={t.label} className={`badge ${t.cls}`}>{t.label}</span>)}
-              </span>
-              <span className="store-cmp-summary">
-                {store.bestRateEntry && (
-                  <span className="store-cmp-rate">
-                    {formatRate(Number(store.bestRateEntry.canonical_rate), store.bestRateEntry.canonical_rate_unit)}
-                    <span className="store-cmp-rate-pack"> ({store.bestRateEntry.unit_size_unit}, £{Number(store.bestRateEntry.price).toFixed(2)})</span>
-                  </span>
-                )}
-                {!store.bestRateEntry && store.cheapestEntry && (
-                  <span className="store-cmp-rate">£{Number(store.cheapestEntry.price).toFixed(2)}{store.cheapestEntry.unit_size_unit ? ` / ${store.cheapestEntry.unit_size_unit}` : ''}</span>
-                )}
-              </span>
-              <span className="store-cmp-chevron">{isOpen ? '▲' : '▼'}</span>
-            </button>
+      {current.map(p => (
+        <div key={p.id} className={`price-row ${p.id === best?.id ? 'price-row--best' : ''}`}>
+          <span className="price-row-rate">
+            {p.canonical_rate != null
+              ? formatRate(Number(p.canonical_rate), p.canonical_rate_unit)
+              : <span className="meta">no rate</span>}
+          </span>
 
-            {isOpen && (
-              <div className="store-cmp-history">
-                {history.map(p => (
-                  <div key={p.id} className="ing-panel-price-row">
-                    <span className="ing-panel-price-val">£{Number(p.price).toFixed(2)}</span>
-                    {p.unit_size_unit && <span className="ing-panel-price-unit">/ {p.unit_size_unit}</span>}
-                    {p.canonical_rate != null && (
-                      <span className="ing-panel-price-rate">{formatRate(Number(p.canonical_rate), p.canonical_rate_unit)}</span>
-                    )}
-                    <span className="ing-panel-price-date">{new Date(p.noted_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: '2-digit' })}</span>
-                  </div>
-                ))}
-              </div>
+          <span className="price-row-what">
+            {editing === p.id ? (
+              <input
+                autoFocus value={draft} onChange={e => setDraft(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') saveLabel(p); if (e.key === 'Escape') setEditing(null) }}
+                onBlur={() => saveLabel(p)}
+                placeholder="which product?"
+              />
+            ) : (
+              <button className="price-row-label" title="Click to name this product"
+                onClick={() => { setEditing(p.id); setDraft(p.label ?? '') }}>
+                {p.label || <span className="meta">name this product…</span>}
+              </button>
             )}
-          </div>
-        )
-      })}
+            <span className="meta">
+              {p.stores?.name ?? 'no shop'}{p.unit_size_unit ? ` · ${p.unit_size_unit}` : ''}
+            </span>
+          </span>
+
+          <span className="price-row-price">£{Number(p.price).toFixed(2)}</span>
+          {p.id === best?.id && <span className="badge badge--gold">cheapest</span>}
+        </div>
+      ))}
+
+      <button className="btn ghost small" onClick={() => setShowHistory(v => !v)} style={{ marginTop: '.4rem' }}>
+        {showHistory ? '▲ Hide history' : `▼ All ${history.length} price${history.length === 1 ? '' : 's'}`}
+      </button>
+      {showHistory && (
+        <div className="store-cmp-history">
+          {history.map(p => (
+            <div key={p.id} className="ing-panel-price-row">
+              <span className="ing-panel-price-val">£{Number(p.price).toFixed(2)}</span>
+              {p.label && <span className="ing-panel-price-unit">{p.label}</span>}
+              {p.unit_size_unit && <span className="ing-panel-price-unit">/ {p.unit_size_unit}</span>}
+              {p.canonical_rate != null && (
+                <span className="ing-panel-price-rate">{formatRate(Number(p.canonical_rate), p.canonical_rate_unit)}</span>
+              )}
+              <span className="meta">{p.stores?.name ?? '—'}</span>
+              <span className="ing-panel-price-date">
+                {new Date(p.noted_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: '2-digit' })}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
@@ -310,10 +303,18 @@ export default function IngredientPanel({ ing, houseId, categories, onClose, onU
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState('')
 
+  /** Name the product a price was for, so the comparison can tell them apart. */
+  async function relabel(price, label) {
+    const next = (label ?? '').trim() || null
+    if (next === (price.label ?? null)) return
+    await supabase.from('ingredient_prices').update({ label: next }).eq('id', price.id)
+    setPrices(ps => ps.map(p => p.id === price.id ? { ...p, label: next } : p))
+  }
+
   async function fetchPrices() {
     const { data } = await supabase
       .from('ingredient_prices')
-      .select('id, store_id, price, unit_size_unit, canonical_rate, canonical_rate_unit, noted_at, stores(name)')
+      .select('id, store_id, price, label, unit_size_unit, canonical_rate, canonical_rate_unit, noted_at, stores(name)')
       .eq('ingredient_id', ing.id)
       .order('noted_at', { ascending: false })
     setPrices(data ?? [])
@@ -383,6 +384,15 @@ export default function IngredientPanel({ ing, houseId, categories, onClose, onU
           />
         </div>
 
+        {/* Prices first — it's the question this panel is usually opened to answer */}
+        {prices === null && (
+          <div className="ing-panel-section"><p className="empty">Loading…</p></div>
+        )}
+        {prices?.length === 0 && (
+          <div className="ing-panel-section"><p className="empty">No prices recorded yet.</p></div>
+        )}
+        {prices?.length > 0 && <PriceComparison prices={prices} onRelabel={relabel} />}
+
         {/* What the planner needs to know */}
         <PlannerFacts ing={ing} onUpdated={onUpdated} />
 
@@ -407,14 +417,6 @@ export default function IngredientPanel({ ing, houseId, categories, onClose, onU
           {msg && <p className="msg ok" style={{ marginTop: '.3rem', fontSize: '.78rem' }}>{msg}</p>}
         </div>
 
-        {/* Store comparison */}
-        {prices === null && (
-          <div className="ing-panel-section"><p className="empty">Loading…</p></div>
-        )}
-        {prices?.length === 0 && (
-          <div className="ing-panel-section"><p className="empty">No prices recorded yet.</p></div>
-        )}
-        {prices?.length > 0 && <StoreComparison prices={prices} />}
       </div>
     </div>
   )
