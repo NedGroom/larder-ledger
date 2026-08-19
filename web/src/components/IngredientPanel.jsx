@@ -1,7 +1,10 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase.js'
 import { calcCanonicalRate, formatRate } from '../lib/units.js'
-import { findOrCreateCategory, setIngredientCategories } from '../lib/larder.js'
+import {
+  findOrCreateCategory, setIngredientCategories, renameIngredient, ingredientUsage,
+  setIngredientArchived, deleteIngredient, deletePrice, mergeIngredients,
+} from '../lib/larder.js'
 import { NUTRIENTS } from '../lib/planner.js'
 
 // ── Price comparison ──────────────────────────────────────────────────────────
@@ -13,7 +16,7 @@ import { NUTRIENTS } from '../lib/planner.js'
  * medium sit side by side and can be compared honestly, rather than one hiding
  * the other behind an average.
  */
-function PriceComparison({ prices, onRelabel }) {
+function PriceComparison({ prices, onRelabel, onDelete }) {
   const [showHistory, setShowHistory] = useState(false)
   const [editing, setEditing] = useState(null)   // price id being relabelled
   const [draft, setDraft] = useState('')
@@ -43,6 +46,15 @@ function PriceComparison({ prices, onRelabel }) {
   async function saveLabel(p) {
     await onRelabel(p, draft)
     setEditing(null)
+  }
+
+  // A price is a fact about one shop on one day. A mistyped one skews the
+  // comparison for good, so any single row can be dropped without touching the
+  // ingredient or the purchase it came from.
+  function remove(p) {
+    const what = [p.label, p.stores?.name, `£${Number(p.price).toFixed(2)}`].filter(Boolean).join(' · ')
+    if (!window.confirm(`Delete this price? (${what})`)) return
+    onDelete(p)
   }
 
   return (
@@ -85,6 +97,7 @@ function PriceComparison({ prices, onRelabel }) {
 
           <span className="price-row-price">£{Number(p.price).toFixed(2)}</span>
           {p.id === best?.id && <span className="badge badge--gold">cheapest</span>}
+          <button className="price-row-del" title="Delete this price" onClick={() => remove(p)}>✕</button>
         </div>
       ))}
 
@@ -105,6 +118,7 @@ function PriceComparison({ prices, onRelabel }) {
               <span className="ing-panel-price-date">
                 {new Date(p.noted_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: '2-digit' })}
               </span>
+              <button className="price-row-del" title="Delete this price" onClick={() => remove(p)}>✕</button>
             </div>
           ))}
         </div>
@@ -295,13 +309,177 @@ function PlannerFacts({ ing, onUpdated }) {
   )
 }
 
+// ── Retiring an ingredient ────────────────────────────────────────────────────
+/**
+ * Archive, merge or delete.
+ *
+ * These are ranked by how much they cost you, and the panel offers them in that
+ * order. Archiving is free — the ingredient leaves the larder and the deck but
+ * every recipe, shop and cook that mentions it is untouched. Merging is the
+ * right answer to a near-duplicate: history moves rather than dies. Deleting is
+ * last and shows exactly what it takes with it, because the foreign keys
+ * cascade and there is no undo.
+ */
+function DangerZone({ ing, ingredients, onArchived, onRemoved }) {
+  const [open, setOpen] = useState(false)
+  const [usage, setUsage] = useState(null)
+  const [mergeId, setMergeId] = useState('')
+  const [busy, setBusy] = useState('')
+  const [err, setErr] = useState('')
+
+  useEffect(() => { setOpen(false); setUsage(null); setMergeId(''); setErr(''); setBusy('') }, [ing.id])
+
+  async function reveal() {
+    setOpen(true)
+    if (!usage) {
+      try { setUsage(await ingredientUsage(ing.id)) } catch (e) { setErr(e.message) }
+    }
+  }
+
+  async function run(what, fn) {
+    setBusy(what); setErr('')
+    try { await fn() } catch (e) { setErr(e.message); setBusy(''); return false }
+    setBusy('')
+    return true
+  }
+
+  const archived = !!ing.archived
+
+  async function toggleArchive() {
+    const ok = await run('archive', () => setIngredientArchived(ing.id, !archived))
+    if (ok) onArchived({ ...ing, archived: !archived })
+  }
+
+  async function doMerge() {
+    const target = ingredients.find(i => String(i.id) === String(mergeId))
+    if (!target) return
+    const msg = `Fold “${ing.name}” into “${target.name}”?\n\n` +
+      `Its prices, recipe lines, shops and cooks all move across, and “${ing.name}” is removed. This can't be undone.`
+    if (!window.confirm(msg)) return
+    const ok = await run('merge', () => mergeIngredients(ing.id, target.id))
+    if (ok) onRemoved(ing, { reason: 'merged', into: target })
+  }
+
+  async function doDelete() {
+    const bits = usage ? [
+      usage.prices   && `${usage.prices} price${usage.prices === 1 ? '' : 's'}`,
+      usage.recipes  && `${usage.recipes} recipe line${usage.recipes === 1 ? '' : 's'}`,
+      usage.purchases && `${usage.purchases} shopping line${usage.purchases === 1 ? '' : 's'}`,
+      usage.targets  && `${usage.targets} deck target${usage.targets === 1 ? '' : 's'}`,
+      usage.cookLines && `${usage.cookLines} cook line${usage.cookLines === 1 ? '' : 's'}`,
+    ].filter(Boolean) : []
+    const msg = bits.length
+      ? `Delete “${ing.name}” and ${bits.join(', ')}?\n\nThis can't be undone. Archive it instead if you only want it out of the way.`
+      : `Delete “${ing.name}”? This can't be undone.`
+    if (!window.confirm(msg)) return
+    const ok = await run('delete', () => deleteIngredient(ing.id))
+    if (ok) onRemoved(ing, { reason: 'deleted' })
+  }
+
+  const others = ingredients.filter(i => i.id !== ing.id && !i.archived)
+
+  return (
+    <div className="ing-panel-section ing-danger">
+      {!open ? (
+        <button className="btn ghost small" onClick={reveal}>Archive, merge or delete…</button>
+      ) : (
+        <>
+          <div className="ing-panel-label">Retire this ingredient</div>
+
+          <div className="ing-danger-row">
+            <div>
+              <strong>{archived ? 'Bring back' : 'Archive'}</strong>
+              <p className="ing-panel-hint" style={{ margin: 0 }}>
+                {archived
+                  ? 'Put it back in the larder and the deck.'
+                  : 'Hide it from the larder and the deck. Nothing that mentions it is changed.'}
+              </p>
+            </div>
+            <button className="btn small secondary" onClick={toggleArchive} disabled={!!busy}>
+              {busy === 'archive' ? <span className="spinner" /> : (archived ? 'Restore' : 'Archive')}
+            </button>
+          </div>
+
+          <div className="ing-danger-row">
+            <div style={{ flex: 1 }}>
+              <strong>Merge into another</strong>
+              <p className="ing-panel-hint" style={{ margin: 0 }}>
+                For a duplicate. Everything recorded against this one moves across.
+              </p>
+              <select value={mergeId} onChange={e => setMergeId(e.target.value)} style={{ marginTop: '.3rem' }}>
+                <option value="">Choose the one to keep…</option>
+                {others.map(i => <option key={i.id} value={i.id}>{i.name}</option>)}
+              </select>
+            </div>
+            <button className="btn small secondary" onClick={doMerge} disabled={!!busy || !mergeId}>
+              {busy === 'merge' ? <span className="spinner" /> : 'Merge'}
+            </button>
+          </div>
+
+          <div className="ing-danger-row">
+            <div>
+              <strong>Delete</strong>
+              <p className="ing-panel-hint" style={{ margin: 0 }}>
+                {usage === null ? 'Counting what references it…'
+                  : usage.total === 0 ? 'Nothing references this — safe to remove.'
+                  : `Takes ${usage.prices} price(s), ${usage.recipes} recipe line(s), ` +
+                    `${usage.purchases} shopping line(s), ${usage.targets} deck target(s) and ` +
+                    `${usage.cookLines} cook line(s) with it.`}
+              </p>
+            </div>
+            <button className="btn small danger" onClick={doDelete} disabled={!!busy}>
+              {busy === 'delete' ? <span className="spinner" /> : 'Delete'}
+            </button>
+          </div>
+
+          {err && <p className="msg err" style={{ marginTop: '.4rem' }}>{err}</p>}
+          <button className="btn ghost small" onClick={() => setOpen(false)}>Close</button>
+        </>
+      )}
+    </div>
+  )
+}
+
 // ── Ingredient detail panel ───────────────────────────────────────────────────
-export default function IngredientPanel({ ing, houseId, categories, onClose, onUpdated, onCategoriesChanged, onCategoryDeleted }) {
+export default function IngredientPanel({
+  ing, houseId, categories, ingredients = [], onClose, onUpdated,
+  onCategoriesChanged, onCategoryDeleted, onRemoved,
+}) {
   const [canonRateUnit, setCanonRateUnit] = useState(ing.canonical_rate_unit || '')
   const [catIds, setCatIds] = useState(ing.categoryIds ?? [])
   const [prices, setPrices] = useState(null)
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState('')
+  const [nameDraft, setNameDraft] = useState(ing.name)
+  const [nameErr, setNameErr] = useState('')
+  const [clash, setClash] = useState(null)   // the ingredient a rename ran into
+
+  /**
+   * Rename. A name that's already taken isn't reported as a failure — the two
+   * rows are almost always the same thing typed twice, so the collision offers
+   * the merge directly.
+   */
+  async function saveName() {
+    const clean = nameDraft.trim()
+    if (!clean || clean === ing.name) { setNameDraft(ing.name); setNameErr(''); setClash(null); return }
+    try {
+      const updated = await renameIngredient(ing, clean)
+      setNameErr(''); setClash(null)
+      onUpdated({ ...ing, ...updated })
+    } catch (e) {
+      setNameErr(e.message)
+      setClash(e.collidesWith ?? null)
+    }
+  }
+
+  async function mergeIntoClash() {
+    if (!clash) return
+    if (!window.confirm(`Fold “${ing.name}” into “${clash.name}”? Its prices, recipes and history move across.`)) return
+    try {
+      await mergeIngredients(ing.id, clash.id)
+      onRemoved?.(ing, { reason: 'merged', into: clash })
+    } catch (e) { setNameErr(e.message) }
+  }
 
   /** Name the product a price was for, so the comparison can tell them apart. */
   async function relabel(price, label) {
@@ -320,9 +498,18 @@ export default function IngredientPanel({ ing, houseId, categories, onClose, onU
     setPrices(data ?? [])
   }
 
+  async function removePrice(price) {
+    try {
+      await deletePrice(price.id)
+      setPrices(ps => ps.filter(p => p.id !== price.id))
+    } catch (e) { setMsg('Error: ' + e.message) }
+  }
+
   useEffect(() => {
     setCanonRateUnit(ing.canonical_rate_unit || '')
     setCatIds(ing.categoryIds ?? [])
+    setNameDraft(ing.name)
+    setNameErr(''); setClash(null)
     fetchPrices()
   }, [ing.id])
 
@@ -364,9 +551,30 @@ export default function IngredientPanel({ ing, houseId, categories, onClose, onU
     <div className="ing-panel-backdrop" onClick={onClose}>
       <div className="ing-panel" onClick={e => e.stopPropagation()}>
         <div className="ing-panel-header">
-          <h3 style={{ margin: 0 }}>{ing.name}</h3>
+          <input
+            className="ing-panel-name"
+            value={nameDraft}
+            onChange={e => setNameDraft(e.target.value)}
+            onBlur={saveName}
+            onKeyDown={e => {
+              if (e.key === 'Enter') e.currentTarget.blur()
+              if (e.key === 'Escape') { setNameDraft(ing.name); setNameErr(''); setClash(null) }
+            }}
+            aria-label="Ingredient name"
+          />
+          {ing.archived && <span className="badge">archived</span>}
           <button className="btn ghost small" onClick={onClose}>✕</button>
         </div>
+        {nameErr && (
+          <p className="msg err" style={{ margin: '0 0 .5rem' }}>
+            {nameErr}
+            {clash && (
+              <button className="btn small secondary" style={{ marginLeft: '.5rem' }} onClick={mergeIntoClash}>
+                Merge into “{clash.name}”
+              </button>
+            )}
+          </p>
+        )}
 
         {/* Categories */}
         <div className="ing-panel-section">
@@ -391,7 +599,7 @@ export default function IngredientPanel({ ing, houseId, categories, onClose, onU
         {prices?.length === 0 && (
           <div className="ing-panel-section"><p className="empty">No prices recorded yet.</p></div>
         )}
-        {prices?.length > 0 && <PriceComparison prices={prices} onRelabel={relabel} />}
+        {prices?.length > 0 && <PriceComparison prices={prices} onRelabel={relabel} onDelete={removePrice} />}
 
         {/* What the planner needs to know */}
         <PlannerFacts ing={ing} onUpdated={onUpdated} />
@@ -417,6 +625,12 @@ export default function IngredientPanel({ ing, houseId, categories, onClose, onU
           {msg && <p className="msg ok" style={{ marginTop: '.3rem', fontSize: '.78rem' }}>{msg}</p>}
         </div>
 
+        <DangerZone
+          ing={ing}
+          ingredients={ingredients}
+          onArchived={updated => onUpdated(updated)}
+          onRemoved={(gone, info) => { onRemoved?.(gone, info); onClose() }}
+        />
       </div>
     </div>
   )

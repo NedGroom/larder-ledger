@@ -20,30 +20,40 @@ export const UNCATEGORISED = '__uncategorised__'
 /**
  * Load every ingredient in the house with its category ids attached, plus the
  * house's category list.
- * @returns {Promise<{ ingredients: Array, categories: Array }>}
+ *
+ * Archived ingredients are left out unless asked for, and separated out rather
+ * than dropped so the Larder can offer to bring them back. The filter is done
+ * here rather than in the query so an older database without the column still
+ * loads — every row simply reads as active.
+ *
+ * @returns {Promise<{ ingredients: Array, archived: Array, categories: Array }>}
  */
-export async function loadLarder(houseId) {
+export async function loadLarder(houseId, { includeArchived = false } = {}) {
   const [{ data: ings }, { data: cats }] = await Promise.all([
     supabase.from('ingredients').select('*').eq('house_id', houseId).order('name'),
     supabase.from('categories').select('*').eq('house_id', houseId).order('name'),
   ])
-  const ingredients = ings ?? []
+  const all = ings ?? []
+  const ingredients = includeArchived ? all : all.filter(i => !i.archived)
+  const archivedRows = all.filter(i => i.archived)
   const categories = cats ?? []
 
   let links = []
-  if (ingredients.length) {
+  if (all.length) {
     const { data } = await supabase
       .from('ingredient_categories')
       .select('ingredient_id, category_id')
-      .in('ingredient_id', ingredients.map(i => i.id))
+      .in('ingredient_id', all.map(i => i.id))
     links = data ?? []
   }
 
   const byIngredient = {}
   for (const l of links) (byIngredient[l.ingredient_id] ??= []).push(l.category_id)
 
+  const withCats = i => ({ ...i, categoryIds: byIngredient[i.id] ?? [] })
   return {
-    ingredients: ingredients.map(i => ({ ...i, categoryIds: byIngredient[i.id] ?? [] })),
+    ingredients: ingredients.map(withCats),
+    archived: archivedRows.map(withCats),
     categories,
   }
 }
@@ -130,7 +140,15 @@ export async function findOrCreateIngredient({ houseId, name, keep = true, unitS
     .eq('house_id', houseId)
     .eq('name_normalized', normalized)
     .maybeSingle()
-  if (existing) return { ...existing, categoryIds: [], _created: false }
+  if (existing) {
+    // Typing a retired ingredient's name back in is a request for it back —
+    // and the alternative is a unique-key error on a row you can't even see.
+    if (existing.archived) {
+      await supabase.from('ingredients').update({ archived: false }).eq('id', existing.id)
+      return { ...existing, archived: false, categoryIds: [], _created: false, _revived: true }
+    }
+    return { ...existing, categoryIds: [], _created: false }
+  }
 
   const { data, error } = await supabase
     .from('ingredients')
@@ -302,4 +320,202 @@ export async function undoPurchase(item) {
     .select('*, ingredients(name), meals(name)').single()
   if (error) throw new Error(error.message)
   return data
+}
+
+// ── Editing and retiring an ingredient ───────────────────────────────────────
+
+/**
+ * Rename an ingredient, keeping the normalised form in step.
+ *
+ * The house can't hold two ingredients with the same normalised name, so
+ * renaming onto an existing one is reported as a collision rather than failing
+ * with a database error — the caller can then offer to merge instead, which is
+ * almost always what was actually wanted.
+ */
+export async function renameIngredient(ingredient, name) {
+  const clean = name.trim()
+  if (!clean) throw new Error('Name required')
+  const normalized = clean.toLowerCase()
+  if (normalized === ingredient.name_normalized) {
+    // Same word, different capitalisation — worth saving, no collision check.
+    if (clean === ingredient.name) return ingredient
+  } else {
+    const { data: clash } = await supabase
+      .from('ingredients').select('id, name')
+      .eq('house_id', ingredient.house_id).eq('name_normalized', normalized)
+      .maybeSingle()
+    if (clash) {
+      const err = new Error(`You already have an ingredient called "${clash.name}".`)
+      err.collidesWith = clash
+      throw err
+    }
+  }
+
+  const { data, error } = await supabase
+    .from('ingredients')
+    .update({ name: clean, name_normalized: normalized })
+    .eq('id', ingredient.id).select('*').single()
+  if (error) throw new Error(error.message)
+  return { ...ingredient, ...data }
+}
+
+/**
+ * Everything that would be lost if this ingredient were deleted outright.
+ * Shown before the fact, because the foreign keys cascade into recipes, past
+ * shops and past cooks — history the user may well want to keep.
+ */
+export async function ingredientUsage(ingredientId) {
+  const count = async (table, column = 'ingredient_id') => {
+    const { count: n } = await supabase
+      .from(table).select('*', { count: 'exact', head: true }).eq(column, ingredientId)
+    return n ?? 0
+  }
+  const [prices, recipes, purchases, targets, cookLines] = await Promise.all([
+    count('ingredient_prices'),
+    count('meal_ingredients'),
+    count('shopping_list_items'),
+    count('ingredient_targets'),
+    count('cook_component_ingredients'),
+  ])
+  return { prices, recipes, purchases, targets, cookLines,
+           total: prices + recipes + purchases + targets + cookLines }
+}
+
+/** Retire an ingredient without touching anything that references it. */
+export async function setIngredientArchived(ingredientId, archived) {
+  const { error } = await supabase
+    .from('ingredients').update({ archived }).eq('id', ingredientId)
+  if (error) throw new Error(error.message)
+}
+
+/**
+ * Delete an ingredient outright. The database cascades this into its prices,
+ * recipe lines, past purchases, targets and cook lines — so the caller must
+ * have shown `ingredientUsage` first and had it confirmed.
+ */
+export async function deleteIngredient(ingredientId) {
+  const { error } = await supabase.from('ingredients').delete().eq('id', ingredientId)
+  if (error) throw new Error(error.message)
+}
+
+/** Drop a single recorded price. */
+export async function deletePrice(priceId) {
+  const { error } = await supabase.from('ingredient_prices').delete().eq('id', priceId)
+  if (error) throw new Error(error.message)
+}
+
+/**
+ * Fold one ingredient into another, moving its history rather than losing it.
+ *
+ * This is the real answer to near-duplicates ("Tomatos" beside "Tomatoes"):
+ * prices, recipe lines, purchases and cook lines all move to the target, and
+ * the source is deleted once it holds nothing.
+ *
+ * Where a row would collide with one the target already has — the same category,
+ * the same period's target, the same recipe — the source's row is dropped rather
+ * than duplicated, since the target's is the one being kept.
+ */
+export async function mergeIngredients(sourceId, targetId) {
+  if (sourceId === targetId) throw new Error('Cannot merge an ingredient into itself')
+
+  // Straight moves: nothing constrains these to be unique.
+  for (const table of ['ingredient_prices', 'shopping_list_items', 'cook_component_ingredients']) {
+    const { error } = await supabase.from(table)
+      .update({ ingredient_id: targetId }).eq('ingredient_id', sourceId)
+    if (error) throw new Error(`${table}: ${error.message}`)
+  }
+
+  // A bare-ingredient cook component points at it directly too.
+  await supabase.from('cook_components').update({ ingredient_id: targetId }).eq('ingredient_id', sourceId)
+
+  // Categories: primary key is (ingredient, category), so skip any the target has.
+  const [{ data: srcCats }, { data: tgtCats }] = await Promise.all([
+    supabase.from('ingredient_categories').select('category_id').eq('ingredient_id', sourceId),
+    supabase.from('ingredient_categories').select('category_id').eq('ingredient_id', targetId),
+  ])
+  const have = new Set((tgtCats ?? []).map(r => r.category_id))
+  const toAdd = (srcCats ?? []).map(r => r.category_id).filter(id => !have.has(id))
+  if (toAdd.length) {
+    await supabase.from('ingredient_categories')
+      .insert(toAdd.map(category_id => ({ ingredient_id: targetId, category_id })))
+  }
+
+  // Recipe lines. Nothing in the database stops one dish holding two lines for
+  // the same ingredient, so there's no collision to dodge here — only a
+  // quantity to avoid losing. Where the two lines are comparable (the same
+  // unit, or both carrying a normalised figure) they're added together; where
+  // they aren't, both survive for the cook to reconcile by eye, which is far
+  // better than quietly halving the tomatoes.
+  const [{ data: srcLines }, { data: tgtLines }] = await Promise.all([
+    supabase.from('meal_ingredients')
+      .select('id, meal_id, required_quantity, required_unit, qty_normalised').eq('ingredient_id', sourceId),
+    supabase.from('meal_ingredients')
+      .select('id, meal_id, required_quantity, required_unit, qty_normalised').eq('ingredient_id', targetId),
+  ])
+  const lineInMeal = new Map((tgtLines ?? []).map(r => [r.meal_id, r]))
+  for (const line of (srcLines ?? [])) {
+    const kept = lineInMeal.get(line.meal_id)
+    if (!kept) {
+      await supabase.from('meal_ingredients').update({ ingredient_id: targetId }).eq('id', line.id)
+      lineInMeal.set(line.meal_id, { ...line, id: line.id })
+      continue
+    }
+
+    const patch = {}
+    const sameUnit = (line.required_unit ?? null) === (kept.required_unit ?? null)
+      && line.required_quantity != null && kept.required_quantity != null
+    if (sameUnit) patch.required_quantity = Number(kept.required_quantity) + Number(line.required_quantity)
+    if (line.qty_normalised != null && kept.qty_normalised != null) {
+      patch.qty_normalised = Number(kept.qty_normalised) + Number(line.qty_normalised)
+    }
+
+    if (Object.keys(patch).length) {
+      await supabase.from('meal_ingredients').update(patch).eq('id', kept.id)
+      Object.assign(kept, patch)          // a second source line adds onto the new total
+      await supabase.from('meal_ingredients').delete().eq('id', line.id)
+    } else {
+      // Not comparable — keep both rather than pick a winner.
+      await supabase.from('meal_ingredients').update({ ingredient_id: targetId }).eq('id', line.id)
+    }
+  }
+
+  // Deck targets: unique per (period, ingredient). Keep the larger of the two —
+  // merging two halves of one thing shouldn't quietly shrink the target.
+  const [{ data: srcTargets }, { data: tgtTargets }] = await Promise.all([
+    supabase.from('ingredient_targets').select('*').eq('ingredient_id', sourceId),
+    supabase.from('ingredient_targets').select('*').eq('ingredient_id', targetId),
+  ])
+  const byPeriod = new Map((tgtTargets ?? []).map(t => [t.period_id, t]))
+  for (const t of (srcTargets ?? [])) {
+    const existing = byPeriod.get(t.period_id)
+    if (existing) {
+      if (Number(t.target_cards) > Number(existing.target_cards)) {
+        await supabase.from('ingredient_targets')
+          .update({ target_cards: t.target_cards }).eq('id', existing.id)
+      }
+      await supabase.from('ingredient_targets').delete().eq('id', t.id)
+    } else {
+      await supabase.from('ingredient_targets').update({ ingredient_id: targetId }).eq('id', t.id)
+    }
+  }
+
+  // Anything the source knew that the target doesn't is worth keeping.
+  const [{ data: src }, { data: tgt }] = await Promise.all([
+    supabase.from('ingredients').select('*').eq('id', sourceId).single(),
+    supabase.from('ingredients').select('*').eq('id', targetId).single(),
+  ])
+  if (src && tgt) {
+    const fill = {}
+    for (const f of ['card_weight', 'qualitative_note', 'canonical_rate_unit', 'canonical_unit',
+                     'kcal_per_100', 'protein_per_100', 'fibre_per_100', 'carbs_per_100', 'fat_per_100']) {
+      if (tgt[f] == null && src[f] != null) fill[f] = src[f]
+    }
+    if (src.has_any && !tgt.has_any) fill.has_any = true
+    if (Object.keys(fill).length) {
+      await supabase.from('ingredients').update(fill).eq('id', targetId)
+    }
+  }
+
+  const { error } = await supabase.from('ingredients').delete().eq('id', sourceId)
+  if (error) throw new Error(error.message)
 }

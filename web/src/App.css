@@ -897,3 +897,37 @@ hr.divider { border: none; border-top: 1px solid #ebebeb; margin: 1rem 0; }
 }
 .price-row-label:hover { text-decoration: underline dotted; }
 .price-row-price { font-variant-numeric: tabular-nums; }
+
+/* ── Editing, retiring and reviving an ingredient ───────────────────── */
+.ing-panel-name {
+  flex: 1; margin: 0; font-size: 1.1rem; font-weight: 700;
+  background: none; border: 1px solid transparent; border-radius: 6px;
+  padding: .2rem .4rem; color: inherit;
+}
+.ing-panel-name:hover { border-color: var(--color-border); }
+.ing-panel-name:focus { border-color: var(--color-accent); background: var(--color-surface2); }
+
+.price-row-del {
+  background: none; border: none; cursor: pointer; padding: 0 .2rem;
+  color: var(--color-text-muted); font-size: .8rem; line-height: 1;
+}
+.price-row-del:hover { color: #c0392b; }
+
+.ing-danger-row {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: .75rem;
+  padding: .55rem 0; border-top: 1px solid var(--color-border);
+}
+.ing-danger-row strong { font-size: .85rem; }
+.ing-danger-row select { margin: 0; max-width: 240px; }
+
+.archived-shelf { margin-top: 1rem; }
+.archived-list { display: flex; flex-direction: column; gap: .3rem; }
+.archived-row {
+  display: flex; align-items: center; justify-content: space-between; gap: .5rem;
+  padding: .35rem .5rem; border-radius: 6px; background: var(--color-surface2);
+}
+.link-btn {
+  background: none; border: none; padding: 0; font: inherit; cursor: pointer;
+  color: inherit; text-align: left; text-decoration: underline dotted;
+}
+.ing-panel-section.ing-danger { flex: 0 0 auto; }

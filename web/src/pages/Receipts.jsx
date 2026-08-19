@@ -46,7 +46,7 @@ function CandidateCard({ row, ingredients, houseMembers, onChange, onIgnore, onS
             className={`match-chip match-chip--primary ${row.matched_ingredient_id || row.new_ingredient_name === row.match_name ? 'match-chip--selected' : ''}`}
             onClick={() => {
               if (isExistingMatch) {
-                const found = ingredients.find(i => i.name === row.match_name)
+                const found = findByName(ingredients, row.match_name)
                 if (found) { onChange('matched_ingredient_id', String(found.id)); onChange('new_ingredient_name', ''); setMode('existing') }
               } else {
                 onChange('new_ingredient_name', row.match_name); onChange('matched_ingredient_id', ''); setMode('new')
@@ -147,6 +147,20 @@ function CandidateCard({ row, ingredients, houseMembers, onChange, onIgnore, onS
   )
 }
 
+/**
+ * Find the ingredient the AI meant.
+ *
+ * It echoes back a name from the list we sent it, but not always character for
+ * character — capitalisation and stray spaces drift. An exact match meant a
+ * near-miss fell through to "new", and the house quietly gained a second
+ * "Olive oil" beside its "Olive Oil".
+ */
+function findByName(ingredients, name) {
+  const want = (name ?? '').trim().toLowerCase()
+  if (!want) return null
+  return ingredients.find(i => i.name.trim().toLowerCase() === want) ?? null
+}
+
 // ── Candidate list + save ─────────────────────────────────────────────────────
 function CandidateTable({ candidates, ingredients, houseMembers, houseId, storeId, ensureList, onPurchases, onItemSaved, onDone }) {
   const [rows, setRows] = useState(candidates.map(c => ({
@@ -160,7 +174,7 @@ function CandidateTable({ candidates, ingredients, houseMembers, houseId, storeI
     _saving: false,
     ...(c.match_type === 'existing' && c.match_name
       ? (() => {
-          const found = ingredients.find(i => i.name === c.match_name)
+          const found = findByName(ingredients, c.match_name)
           return found ? { matched_ingredient_id: String(found.id) } : {}
         })()
       : {}),
@@ -653,9 +667,14 @@ export default function Receipts({ mode = 'standalone', listId = null, lockedSto
    * needs these values in the same tick, and a state read there would still be
    * the empty pre-load array — which is how the AI ended up being handed no
    * known ingredients to match against.
+   *
+   * Pass `refresh` when the list must be current. Scanning a stack of receipts
+   * in one sitting is the usual case: without it, receipt two is matched
+   * against the larder as it stood before receipt one created anything, so the
+   * same ingredient gets invented twice.
    */
-  async function ensureLoaded() {
-    if (storesLoaded) return { stores, ingredients, houseMembers, storeId }
+  async function ensureLoaded({ refresh = false } = {}) {
+    if (storesLoaded && !refresh) return { stores, ingredients, houseMembers, storeId }
     const [{ data: s }, { data: i }, { data: hu }] = await Promise.all([
       supabase.from('stores').select('*').eq('house_id', house.id).order('name'),
       supabase.from('ingredients').select('id,name').eq('house_id', house.id).order('name'),
@@ -664,7 +683,9 @@ export default function Receipts({ mode = 'standalone', listId = null, lockedSto
     const members = (hu ?? []).map(r => r.users).filter(Boolean)
     const storeList = s ?? []
     const ingList = i ?? []
-    const firstStore = storeList.length ? storeList[0].id : ''
+    // Keep whatever shop is already chosen — a refresh mid-session mustn't
+    // silently move the receipt to a different shop.
+    const firstStore = storeId || (storeList.length ? storeList[0].id : '')
     rs({
       stores: storeList,
       ingredients: ingList,
@@ -740,7 +761,7 @@ export default function Receipts({ mode = 'standalone', listId = null, lockedSto
     if (currentProvider?.requiresApiKey && !apiKey) { rs({ extractErr: 'Enter an API key above' }); return }
     if (inputMode === 'image' && !imageFile) { rs({ extractErr: 'Select an image first' }); return }
     if (inputMode === 'text' && !plainText.trim()) { rs({ extractErr: 'Paste some receipt text first' }); return }
-    const loaded = await ensureLoaded()
+    const loaded = await ensureLoaded({ refresh: true })
     setExtracting(true)
     try {
       let content, contentType, imageMime

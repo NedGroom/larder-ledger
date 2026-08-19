@@ -11,10 +11,12 @@ const db = makeDb({
   stores: [{ id: 1, house_id: 1, name: 'Tesco' }],
 })
 
-// One item the house knows, one it has never seen.
+// One item the house knows, one it has never seen. The known one comes back in
+// the model's own casing with a stray space — which is exactly how a second
+// "Tomatoes" used to get invented alongside the first.
 const AI_RESULT = {
   items: [
-    { description: 'TOMATOES 400G', quantity: 2, price: 1.15, unit: '400g', match_type: 'existing', match_name: 'Tomatoes', match_alts: ['Tinned tomatoes', 'Cherry tomatoes'] },
+    { description: 'TOMATOES 400G', quantity: 2, price: 1.15, unit: '400g', match_type: 'existing', match_name: ' tomatoes ', match_alts: ['Tinned tomatoes', 'Cherry tomatoes'] },
     { description: 'MARMITE 250G',  quantity: 1, price: 3.40, unit: '250g', match_type: 'new',      match_name: 'Marmite',  match_alts: ['Yeast extract', 'Spread'] },
   ],
   fees: [], discounts: [], receipt_total: 5.70,
@@ -71,6 +73,12 @@ check('purchases are bought, priced and packed',
 check('every purchase points at a real ingredient', db.shopping_list_items.every(i => i.ingredient_id != null))
 check('the unknown item became a remembered ingredient',
       db.ingredients.some(i => i.name === 'Marmite' && i.keep === true))
+check('a known item echoed back in different casing is not invented again',
+      db.ingredients.filter(i => i.name_normalized === 'tomatoes').length === 1,
+      JSON.stringify(db.ingredients.map(i => i.name)))
+check('and its purchase points at the ingredient we already had',
+      db.shopping_list_items.some(i => i.ingredient_id === 1),
+      JSON.stringify(db.shopping_list_items.map(i => i.ingredient_id)))
 check('prices were logged for both', db.ingredient_prices.length === 2)
 check('prices carry a canonical rate', db.ingredient_prices.every(p => p.canonical_rate != null))
 check('prices are attributed to the shop', db.ingredient_prices.every(p => p.store_id === 1))

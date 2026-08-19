@@ -597,10 +597,21 @@ export default function Shopping() {
           ing={selected}
           houseId={house.id}
           categories={categories}
+          ingredients={ingredients}
           onClose={() => setSelected(null)}
           onUpdated={updated => {
-            setIngredients(prev => prev.map(i => i.id === updated.id ? { ...i, ...updated } : i))
+            // Archiving mid-shop takes it off the browse list; the panel stays
+            // open so the same tap can undo it.
+            setIngredients(prev => updated.archived
+              ? prev.filter(i => i.id !== updated.id)
+              : prev.some(i => i.id === updated.id)
+                ? prev.map(i => i.id === updated.id ? { ...i, ...updated } : i)
+                : [...prev, updated].sort((a, b) => a.name.localeCompare(b.name)))
             setSelected(updated)
+          }}
+          onRemoved={gone => {
+            setIngredients(prev => prev.filter(i => i.id !== gone.id))
+            setSelected(null)
           }}
           onCategoriesChanged={cat => setCategories(prev => prev.some(c => c.id === cat.id) ? prev : [...prev, cat].sort((a, b) => a.name.localeCompare(b.name)))}
           onCategoryDeleted={cat => {

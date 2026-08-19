@@ -3,11 +3,13 @@ import { supabase } from '../lib/supabase.js'
 import { useApp } from '../App.jsx'
 import IngredientBrowser from '../components/IngredientBrowser.jsx'
 import IngredientPanel, { CategoryPicker } from '../components/IngredientPanel.jsx'
-import { loadLarder, loadPrices, priceFor, setIngredientCategories } from '../lib/larder.js'
+import { loadLarder, loadPrices, priceFor, setIngredientCategories, setIngredientArchived } from '../lib/larder.js'
 
 export default function Pantry() {
   const { house } = useApp()
   const [ingredients, setIngredients] = useState([])
+  const [archived, setArchived] = useState([])
+  const [showArchived, setShowArchived] = useState(false)
   const [categories, setCategories] = useState([])
   const [pricesByIng, setPricesByIng] = useState({})
   const [loading, setLoading] = useState(true)
@@ -26,8 +28,9 @@ export default function Pantry() {
 
   const load = useCallback(async () => {
     setLoading(true)
-    const { ingredients: ings, categories: cats } = await loadLarder(house.id)
+    const { ingredients: ings, archived: gone, categories: cats } = await loadLarder(house.id)
     setIngredients(ings)
+    setArchived(gone)
     setCategories(cats)
     setPricesByIng(await loadPrices(ings.map(i => i.id)))
     setLoading(false)
@@ -75,6 +78,40 @@ export default function Pantry() {
   }
 
   const inStock = ingredients.filter(i => i.has_any).length
+
+  const sortByName = list => [...list].sort((a, b) => a.name.localeCompare(b.name))
+
+  /**
+   * One handler for every edit made in the panel. Archiving isn't a separate
+   * event — it's just an update whose result belongs on the other shelf, so the
+   * ingredient is re-bucketed from its own `archived` flag rather than from a
+   * signal the panel has to remember to send.
+   */
+  function applyUpdate(updated) {
+    if (updated.archived) {
+      setIngredients(prev => prev.filter(i => i.id !== updated.id))
+      setArchived(prev => sortByName([...prev.filter(i => i.id !== updated.id), updated]))
+    } else {
+      setArchived(prev => prev.filter(i => i.id !== updated.id))
+      setIngredients(prev => prev.some(i => i.id === updated.id)
+        ? prev.map(i => i.id === updated.id ? { ...i, ...updated } : i)
+        : sortByName([...prev, updated]))
+    }
+    setSelected(updated)
+  }
+
+  /** Merged or deleted — gone from both shelves either way. */
+  function dropIngredient(gone) {
+    setIngredients(prev => prev.filter(i => i.id !== gone.id))
+    setArchived(prev => prev.filter(i => i.id !== gone.id))
+    setSelected(null)
+  }
+
+  async function restore(ing) {
+    await setIngredientArchived(ing.id, false)
+    setArchived(prev => prev.filter(i => i.id !== ing.id))
+    setIngredients(prev => sortByName([...prev, { ...ing, archived: false }]))
+  }
 
   function noteCategory(cat) {
     setCategories(prev => prev.some(c => c.id === cat.id) ? prev : [...prev, cat].sort((a, b) => a.name.localeCompare(b.name)))
@@ -159,10 +196,36 @@ export default function Pantry() {
           onToggleStock={toggleHasAny}
           onToggleKeep={toggleKeep}
           onSelect={setSelected}
-          onCreated={ing => setIngredients(prev =>
-            prev.some(i => i.id === ing.id) ? prev : [...prev, ing].sort((a, b) => a.name.localeCompare(b.name))
-          )}
+          onCreated={ing => {
+            // Typing an archived ingredient's name brings it back, so it has to
+            // leave the archived shelf as well as join the list.
+            setArchived(prev => prev.filter(i => i.id !== ing.id))
+            setIngredients(prev => prev.some(i => i.id === ing.id) ? prev : sortByName([...prev, ing]))
+          }}
         />
+      )}
+
+      {archived.length > 0 && (
+        <div className="archived-shelf">
+          <button className="btn ghost small" onClick={() => setShowArchived(v => !v)}>
+            {showArchived ? '▲ Hide' : '▼ Show'} {archived.length} archived
+          </button>
+          {showArchived && (
+            <>
+              <p className="muted-note">
+                Out of the larder and the deck, but everything recorded against them is intact.
+              </p>
+              <div className="archived-list">
+                {archived.map(i => (
+                  <div key={i.id} className="archived-row">
+                    <button className="link-btn" onClick={() => setSelected(i)}>{i.name}</button>
+                    <button className="btn small secondary" onClick={() => restore(i)}>Restore</button>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
       )}
 
       {selected && (
@@ -170,11 +233,10 @@ export default function Pantry() {
           ing={selected}
           houseId={house.id}
           categories={categories}
+          ingredients={ingredients}
           onClose={() => setSelected(null)}
-          onUpdated={updated => {
-            setIngredients(prev => prev.map(i => i.id === updated.id ? { ...i, ...updated } : i))
-            setSelected(updated)
-          }}
+          onUpdated={applyUpdate}
+          onRemoved={dropIngredient}
           onCategoriesChanged={noteCategory}
           onCategoryDeleted={dropCategory}
         />

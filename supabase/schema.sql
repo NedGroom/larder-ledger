@@ -40,6 +40,7 @@ CREATE TABLE ingredients (
   canonical_quantity NUMERIC,
   has_any BOOLEAN DEFAULT FALSE,
   keep BOOLEAN NOT NULL DEFAULT TRUE,   -- "generally want this"; drives shopping-list build defaults
+  archived BOOLEAN NOT NULL DEFAULT FALSE,  -- retired: hidden from browsing, history kept
   stock_qty NUMERIC,                    -- optional detail beside has_any
   stock_unit TEXT,
   card_weight NUMERIC,                  -- g/ml one deck card of this is worth
@@ -57,6 +58,7 @@ CREATE TABLE ingredients (
 
 CREATE UNIQUE INDEX ux_ingredients_house_name_normalized ON ingredients(house_id, name_normalized);
 CREATE INDEX idx_ingredients_house ON ingredients(house_id);
+CREATE INDEX idx_ingredients_house_active ON ingredients(house_id) WHERE NOT archived;
 
 -- Free-form, per-house. An ingredient may belong to several; the Larder shows
 -- it under each one.

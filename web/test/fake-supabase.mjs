@@ -99,18 +99,31 @@ export async function installRoutes(page, db) {
       return out
     }
 
-    let body
-    if (method === 'GET') {
-      let rows = db[table] ? [...db[table]] : []
+    // One filter implementation for every verb. PATCH and DELETE used to honour
+    // only `id`, which meant an update filtered by any other column silently
+    // rewrote the whole table — the fake would have passed a merge that
+    // destroyed the database.
+    const applyFilters = rows => {
       for (const [k, v] of url.searchParams) {
-        if (['select', 'order', 'limit', 'offset'].includes(k)) continue
+        if (['select', 'order', 'limit', 'offset', 'columns', 'on_conflict'].includes(k)) continue
         if (v.startsWith('eq.')) {
           rows = rows.filter(r => String(r[k]) === v.slice(3))
         } else if (v.startsWith('in.')) {
           const set = v.slice(3).replace(/^\(|\)$/g, '').split(',').map(x => x.replace(/"/g, ''))
           rows = rows.filter(r => set.includes(String(r[k])))
+        } else if (v.startsWith('is.')) {
+          const want = v.slice(3)
+          rows = rows.filter(r => want === 'null' ? r[k] == null : String(r[k]) === want)
         }
       }
+      return rows
+    }
+
+    let body
+    let matched = 0
+    if (method === 'GET' || method === 'HEAD') {
+      const rows = applyFilters(db[table] ? [...db[table]] : [])
+      matched = rows.length
       body = rows.map(embed)
     } else if (method === 'POST') {
       const payload = req.postDataJSON()
@@ -125,23 +138,29 @@ export async function installRoutes(page, db) {
         return row
       }).map(embed)
     } else if (method === 'PATCH') {
-      const idFilter = url.searchParams.get('id')
-      const rows = (db[table] || []).filter(r => !idFilter || String(r.id) === idFilter.slice(3))
+      const rows = applyFilters(db[table] || [])
       rows.forEach(r => Object.assign(r, req.postDataJSON()))
       body = rows.map(embed)
     } else if (method === 'DELETE') {
-      const idFilter = url.searchParams.get('id')
-      if (db[table] && idFilter) db[table] = db[table].filter(r => String(r.id) !== idFilter.slice(3))
+      const doomed = new Set(applyFilters(db[table] || []))
+      if (db[table]) db[table] = db[table].filter(r => !doomed.has(r))
       body = []
     } else {
       body = []
     }
 
     const wantsSingle = (req.headers()['accept'] || '').includes('vnd.pgrst.object')
+    // `select('*', { count: 'exact', head: true })` reads the total off the
+    // Content-Range header and never looks at the body.
+    const wantsCount = (req.headers()['prefer'] || '').includes('count=')
     await route.fulfill({
       status: method === 'POST' ? 201 : 200,
       contentType: 'application/json',
-      body: JSON.stringify(wantsSingle ? (body[0] ?? null) : body),
+      headers: wantsCount
+        ? { 'content-range': `0-${Math.max(0, matched - 1)}/${matched}`,
+            'access-control-expose-headers': 'content-range' }
+        : undefined,
+      body: method === 'HEAD' ? '' : JSON.stringify(wantsSingle ? (body[0] ?? null) : body),
     })
   })
 }
