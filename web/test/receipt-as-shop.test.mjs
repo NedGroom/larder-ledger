@@ -17,9 +17,14 @@ const db = makeDb({
 const AI_RESULT = {
   items: [
     { description: 'TOMATOES 400G', quantity: 2, price: 1.15, unit: '400g', match_type: 'existing', match_name: ' tomatoes ', match_alts: ['Tinned tomatoes', 'Cherry tomatoes'] },
-    { description: 'MARMITE 250G',  quantity: 1, price: 3.40, unit: '250g', match_type: 'new',      match_name: 'Marmite',  match_alts: ['Yeast extract', 'Spread'] },
+    { description: 'MARMITE 250G',  quantity: 1, price: 3.40, unit: '250g', match_type: 'new',      match_name: 'Marmite',  match_alts: ['Yeast extract', 'Spread'],
+      category: 'Spreads', nutrition: { kcal: 262, protein: 34, carbs: 30, fat: 0.1, fibre: 3.6 } },
+    // A hallucinated estimate must not reach the database — a hundredfold
+    // calorie figure would poison every plan this ingredient appears in.
+    { description: 'OAT MILK 1L',   quantity: 1, price: 1.30, unit: '1L',   match_type: 'new',      match_name: 'Oat milk', match_alts: ['Oat drink', 'Milk alternative'],
+      category: 'Dairy free', nutrition: { kcal: 4500, protein: 1, carbs: 7, fat: 1.5, fibre: 0.8 } },
   ],
-  fees: [], discounts: [], receipt_total: 5.70,
+  fees: [], discounts: [], receipt_total: 7.00,
   store_name: 'Tesco', purchase_date: '2026-08-11',
 }
 
@@ -40,14 +45,14 @@ await page.click('summary:has-text("Scan a receipt")')
 await page.waitForTimeout(500)
 check('the scan is framed as a shop', (await page.textContent('body')).includes('Receipt → shop'))
 
-await page.fill('textarea', 'TESCO\nTOMATOES 400G  2 @ 1.15\nMARMITE 250G  3.40\nTOTAL 5.70')
+await page.fill('textarea', 'TESCO\nTOMATOES 400G  2 @ 1.15\nMARMITE 250G  3.40\nOAT MILK 1L  1.30\nTOTAL 7.00')
 await page.click('button:has-text("Extract prices with AI")')
 await page.waitForTimeout(1500)
 
 check('the model is told which ingredients we know', ai.prompt.includes('Known ingredients') && ai.prompt.includes('Tomatoes'))
 check('the model is told which shops we know', ai.prompt.includes('Known shops') && ai.prompt.includes('Tesco'))
 check('the model is asked for the shop and date', ai.prompt.includes('store_name') && ai.prompt.includes('purchase_date'))
-check('both lines are up for review', (await page.textContent('body')).includes('Review extracted items (2 found)'))
+check('every line is up for review', (await page.textContent('body')).includes('Review extracted items (3 found)'))
 
 const confirm = page.locator('.receipt-shop-confirm')
 check('shop and date are put up for confirmation', await confirm.count() === 1)
@@ -63,11 +68,11 @@ const list = db.shopping_lists[0] || {}
 check('it is already complete', list.status === 'done')
 check('it is marked as coming from a receipt', list.source === 'receipt')
 check('it carries the receipt date, not today', list.purchased_on === '2026-08-11')
-check('it remembers the printed total', Number(list.receipt_total) === 5.7)
+check('it remembers the printed total', Number(list.receipt_total) === 7)
 check('it is attributed to the right shop', list.store_id === 1)
-check('our line total is tallied without float dust', Number(list.total_paid) === 5.7, String(list.total_paid))
+check('our line total is tallied without float dust', Number(list.total_paid) === 7, String(list.total_paid))
 
-check('both lines became purchases', db.shopping_list_items.length === 2)
+check('every line became a purchase', db.shopping_list_items.length === 3)
 check('purchases are bought, priced and packed',
       db.shopping_list_items.every(i => i.bought && i.price_paid != null && i.unit_size_unit && i.source === 'receipt-ai'))
 check('every purchase points at a real ingredient', db.shopping_list_items.every(i => i.ingredient_id != null))
@@ -79,7 +84,7 @@ check('a known item echoed back in different casing is not invented again',
 check('and its purchase points at the ingredient we already had',
       db.shopping_list_items.some(i => i.ingredient_id === 1),
       JSON.stringify(db.shopping_list_items.map(i => i.ingredient_id)))
-check('prices were logged for both', db.ingredient_prices.length === 2)
+check('prices were logged for each', db.ingredient_prices.length === 3)
 check('prices carry a canonical rate', db.ingredient_prices.every(p => p.canonical_rate != null))
 check('prices are attributed to the shop', db.ingredient_prices.every(p => p.store_id === 1))
 // The receipt knows the product; that wording must survive onto the price row,
@@ -89,6 +94,29 @@ check('the receipt line names the product on the price row',
       db.ingredient_prices.some(p => p.label === 'MARMITE 250G'),
       JSON.stringify(db.ingredient_prices.map(p => p.label)))
 check('bought items are back in stock', db.ingredients.every(i => i.has_any === true))
+
+// A receipt knows the aisle and roughly what the food is. Both used to be
+// thrown away — which is why every receipt-born ingredient landed in
+// "Uncategorised" with no nutrition at all.
+const marmite = db.ingredients.find(i => i.name === 'Marmite')
+const spreads = db.categories.find(c => c.name === 'Spreads')
+check('a new ingredient is filed in the category the receipt implied',
+      !!spreads && db.ingredient_categories.some(l => l.ingredient_id === marmite.id && l.category_id === spreads.id),
+      JSON.stringify(db.categories.map(c => c.name)))
+check('and carries an opening nutrition estimate',
+      Number(marmite.kcal_per_100) === 262 && Number(marmite.protein_per_100) === 34,
+      JSON.stringify(marmite))
+check('marked as an estimate, so a photographed label can supersede it',
+      marmite.nutrition_source === 'estimated', String(marmite.nutrition_source))
+
+const oat = db.ingredients.find(i => i.name === 'Oat milk')
+check('an estimate that breaks the arithmetic is refused',
+      oat.kcal_per_100 == null && oat.nutrition_source == null,
+      JSON.stringify(oat))
+check('but the purchase itself still goes through',
+      db.shopping_list_items.some(i => i.ingredient_id === oat.id && i.bought))
+check('a known ingredient is not re-estimated over',
+      db.ingredients.find(i => i.id === 1).nutrition_source == null)
 
 // A finished receipt must not occupy the "one shop at a time" slot.
 await page.click('text=🛒 Shopping')

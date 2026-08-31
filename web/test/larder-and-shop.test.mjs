@@ -98,6 +98,12 @@ check('the planned line is filled in, not duplicated',
       db.shopping_list_items.filter(i => i.ingredient_id === 1).length === 1 && bought.bought === true)
 check('the line links the price it logged', bought.price_id != null)
 check('a bought item returns to stock', db.ingredients.find(i => i.id === 1).has_any === true)
+// Two 400g packs is 800g through the door; the larder should say so rather
+// than leaving a quantity the user has to keep by hand.
+check('buying counts the quantity into stock',
+      Number(db.ingredients.find(i => i.id === 1).stock_qty) === 800 &&
+      db.ingredients.find(i => i.id === 1).stock_unit === 'g',
+      JSON.stringify(db.ingredients.find(i => i.id === 1)))
 check('the running spend is shown', (await page.textContent('body')).includes('Spent so far: £2.40'))
 
 const before = db.ingredient_prices.length
@@ -106,6 +112,12 @@ await page.waitForTimeout(700)
 check('undo retracts the price it logged', db.ingredient_prices.length === before - 1)
 check('undo returns the line to unbought',
       db.shopping_list_items.find(i => i.ingredient_id === 1).bought === false)
+check('undo takes the quantity back off the shelf',
+      Number(db.ingredients.find(i => i.id === 1).stock_qty) === 0,
+      String(db.ingredients.find(i => i.id === 1).stock_qty))
+// An undo says nothing about what the house had before the shop.
+check('but does not claim the house has none',
+      db.ingredients.find(i => i.id === 1).has_any === true)
 
 await page.click('button:has-text("Add more items")')
 await page.waitForTimeout(500)

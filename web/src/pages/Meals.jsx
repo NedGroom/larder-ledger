@@ -61,6 +61,7 @@ function QuickAddIngredient({ houseId, onAdded }) {
 function RecipeModal({ houseId, editing, parent, onClose, onSaved }) {
   const isVariant = !!parent || !!editing?.parent_id
   const [allIngredients, setAllIngredients] = useState([])
+  const [unitsByIng, setUnitsByIng] = useState({})   // ingredient_id → [{label, grams}]
   const [name, setName] = useState(editing?.name ?? '')
   const [dishType, setDishType] = useState(editing?.dish_type ?? '')
   const [prepTime, setPrepTime] = useState(editing?.prep_time_min ?? '')
@@ -83,7 +84,19 @@ function RecipeModal({ houseId, editing, parent, onClose, onSaved }) {
 
   useEffect(() => {
     supabase.from('ingredients').select('*').eq('house_id', houseId).order('name')
-      .then(({ data }) => setAllIngredients(data ?? []))
+      .then(async ({ data }) => {
+        const ings = data ?? []
+        setAllIngredients(ings)
+        // The ingredients' own measures ("1 tin = 400 g"), so a quantity typed
+        // in an awkward unit still resolves to grams instead of silently
+        // leaving the deck and the nutrition maths.
+        if (!ings.length) return setUnitsByIng({})
+        const { data: units } = await supabase.from('ingredient_units')
+          .select('ingredient_id, label, grams').in('ingredient_id', ings.map(i => i.id))
+        const by = {}
+        for (const u of (units ?? [])) (by[u.ingredient_id] ??= []).push(u)
+        setUnitsByIng(by)
+      })
     supabase.from('categories').select('*').eq('house_id', houseId).order('name')
       .then(({ data }) => setCategories(data ?? []))
     if (editing) {
@@ -107,17 +120,19 @@ function RecipeModal({ houseId, editing, parent, onClose, onSaved }) {
     setSelected(prev => ({ ...prev, [id]: prev[id] ? { ...prev[id], checked: !prev[id].checked } : { checked: true, quantity: '', unit: '', normalised: '' } }))
   }
 
-  // Typing a quantity re-derives the g/ml figure where the unit allows it, but
-  // never overwrites a number the user has set by hand.
-  function setQty(id, qty) {
+  // Typing a quantity or a unit re-derives the g/ml figure where the units
+  // allow it, but never overwrites a number the user has set by hand.
+  function rederive(id, patch) {
     setSelected(prev => {
-      const row = prev[id] ?? { checked: true }
-      const unit = row.unit || allIngredients.find(i => i.id === id)?.canonical_unit || ''
-      const auto = suggestNormalised(qty, unit)
-      const keepManual = row._manualNorm
-      return { ...prev, [id]: { ...row, quantity: qty, normalised: keepManual ? row.normalised : (auto ?? row.normalised ?? '') } }
+      const row = { ...(prev[id] ?? { checked: true }), ...patch }
+      const unit = row.unit ?? allIngredients.find(i => i.id === id)?.canonical_unit ?? ''
+      const auto = suggestNormalised(row.quantity, unit, unitsByIng[id] ?? [])
+      if (row._manualNorm) return { ...prev, [id]: row }
+      return { ...prev, [id]: { ...row, normalised: auto ?? '' } }
     })
   }
+  const setQty  = (id, quantity) => rederive(id, { quantity })
+  const setUnit = (id, unit)     => rederive(id, { unit })
   const setNorm = (id, value) =>
     setSelected(prev => ({ ...prev, [id]: { ...prev[id], normalised: value, _manualNorm: true } }))
 
@@ -222,10 +237,17 @@ function RecipeModal({ houseId, editing, parent, onClose, onSaved }) {
                   {sel.checked && (
                     <>
                       <input type="number" placeholder="qty" value={sel.quantity ?? ''} onChange={e => setQty(ing.id, e.target.value)} min="0" step="any" />
-                      <span className="ing-unit">{ing.canonical_unit ?? ''}</span>
+                      <input className="ing-unit" placeholder={ing.canonical_unit || 'unit'}
+                        title={measureHint(ing, unitsByIng[ing.id])}
+                        value={sel.unit ?? ''} onChange={e => setUnit(ing.id, e.target.value)} />
                       <input type="number" className="ing-norm" placeholder="g/ml"
                         title={`Total for the whole dish, in g or ml — this is what the deck and nutrients use.${ing.qualitative_note ? ` (${ing.qualitative_note})` : ''}`}
                         value={sel.normalised ?? ''} onChange={e => setNorm(ing.id, e.target.value)} min="0" step="any" />
+                      {sel.quantity && !sel.normalised && (
+                        <span className="ing-norm-warn" title="Without a g/ml figure this line is invisible to the deck and to nutrition. Add a measure on the ingredient, or type the grams here.">
+                          ⚠ won't convert
+                        </span>
+                      )}
                     </>
                   )}
                 </div>
@@ -514,6 +536,14 @@ function DishDetail({ meal, dishesById, childrenByParent, onOpen, onEdit, onAddV
 }
 
 // ── Main page ─────────────────────────────────────────────────────────────────
+/** What this ingredient can be measured in, for the unit box's tooltip. */
+function measureHint(ing, units) {
+  const known = (units ?? []).map(u => `1 ${u.label} = ${u.grams}g`)
+  return known.length
+    ? `Unit for this line. Known measures: ${known.join(' · ')}`
+    : 'Unit for this line (g, ml, tin, handful…). Teach the app what an odd one weighs on the ingredient itself.'
+}
+
 export default function Meals() {
   const { house } = useApp()
   const [meals, setMeals] = useState([])   // all meals (dishes + variants)

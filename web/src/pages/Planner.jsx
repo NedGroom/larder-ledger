@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabase.js'
 import { useApp } from '../App.jsx'
 import { loadLarder, groupByCategory } from '../lib/larder.js'
 import {
-  deckState, formatCards, toHalves, unallocatedServings, sumNutrition,
+  deckState, deckBlindSpots, formatCards, toHalves, unallocatedServings, sumNutrition,
   defaultPeriod, withinPeriod, periodsCovering, dealFromDeck, todayStr, addDays,
   requirementsForPeriod, NUTRIENTS,
 } from '../lib/planner.js'
@@ -40,17 +40,28 @@ function DeckStack({ ing, state, onPick }) {
   const remaining = state?.remaining ?? 0
   const pending = state?.pending ?? 0
   const over = remaining < 0
+  // A stack the deck can't count mustn't show a confident number. The count is
+  // replaced by "?" and the reason is on the face of the card, not in a tooltip
+  // nobody hovers on a phone.
+  const blind = state?.blind ?? {}
+  const uncountable = !!state?.uncountable
+  const why = blind.noCardWeight ? 'needs a card weight'
+            : blind.unconvertedLines > 0 ? `${blind.unconvertedLines} recipe line${blind.unconvertedLines === 1 ? '' : 's'} won't convert`
+            : ''
   return (
     <button
-      className={`deck-stack ${over ? 'deck-stack--over' : ''} ${toHalves(remaining) === 0 && !over ? 'deck-stack--spent' : ''}`}
+      className={`deck-stack ${uncountable ? 'deck-stack--blind' : ''} ${over ? 'deck-stack--over' : ''} ${!uncountable && toHalves(remaining) === 0 && !over ? 'deck-stack--spent' : ''}`}
       onClick={() => onPick(ing)}
       title={`${ing.name} — target ${formatCards(state?.target ?? 0)}, spent ${formatCards(state?.spent ?? 0)}` +
              (pending > 0 ? `, ${formatCards(pending)} cooked but not placed` : '') +
-             (ing.card_weight ? ` · 1 card = ${ing.card_weight}g` : ' · no card weight set')}
+             (uncountable ? ` · ${why} — this count is incomplete` : '') +
+             (ing.card_weight ? ` · 1 card = ${ing.card_weight}g` : '')}
     >
       <span className="deck-stack-name">{ing.name}</span>
-      <span className="deck-stack-count">{formatCards(remaining)}</span>
-      {pending > 0 && <span className="deck-stack-pending">+{formatCards(pending)} cooked</span>}
+      <span className="deck-stack-count">{uncountable ? '?' : formatCards(remaining)}</span>
+      {uncountable
+        ? <span className="deck-stack-blind">{why}</span>
+        : pending > 0 && <span className="deck-stack-pending">+{formatCards(pending)} cooked</span>}
     </button>
   )
 }
@@ -182,6 +193,10 @@ export default function Planner() {
     [ingredients, deck])
 
   const sections = useMemo(() => groupByCategory(deckIngredients, categories), [deckIngredients, categories])
+
+  // Only report blind spots for stacks actually in the rail — an untargeted
+  // ingredient with no card weight isn't a problem, it's just not in the deck.
+  const blindSpots = useMemo(() => deckBlindSpots(deck, deckIngredients), [deck, deckIngredients])
 
   const periodCooks = useMemo(
     () => plan.cooks.filter(c => !period || c.period_id === period.id),
@@ -348,6 +363,28 @@ export default function Planner() {
 
       {deckIngredients.length === 0 && (
         <p className="empty">No targets set for this period yet — “Edit targets” builds the deck.</p>
+      )}
+
+      {blindSpots.total > 0 && (
+        <p className="msg warn deck-blind-banner">
+          {blindSpots.noWeight.length > 0 && (
+            <>
+              <strong>{blindSpots.noWeight.length}</strong> {blindSpots.noWeight.length === 1 ? 'stack has' : 'stacks have'} no
+              card weight, so cooking them spends nothing: {blindSpots.noWeight.slice(0, 5).join(', ')}
+              {blindSpots.noWeight.length > 5 ? ` and ${blindSpots.noWeight.length - 5} more` : ''}.{' '}
+              <button className="link-btn" onClick={() => setModal({ kind: 'targets' })}>Set them</button>.
+            </>
+          )}
+          {blindSpots.unconverted.length > 0 && (
+            <>
+              {blindSpots.noWeight.length > 0 && <br />}
+              <strong>{blindSpots.unconverted.length}</strong> {blindSpots.unconverted.length === 1 ? 'stack has' : 'stacks have'} recipe
+              lines in units the app can't convert: {blindSpots.unconverted.slice(0, 5).join(', ')}
+              {blindSpots.unconverted.length > 5 ? ` and ${blindSpots.unconverted.length - 5} more` : ''}.
+              Add a measure (“1 tin = 400 g”) on the ingredient.
+            </>
+          )}
+        </p>
       )}
 
       {sections.map(sec => (

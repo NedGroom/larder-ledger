@@ -18,6 +18,7 @@ no server, nothing to set up:
 
 ```bash
 cd web && node test/planner-math.test.mjs
+cd web && node test/nutrition-and-deck.test.mjs
 ```
 
 The browser suites need a dev server and Playwright. Playwright is deliberately
@@ -52,6 +53,7 @@ isn't right for your machine.
 | `prices.test.mjs` | The ingredient panel's price comparison: ranked cheapest per unit, product labels, history |
 | `ingredient-edits.test.mjs` | Renaming, deleting one price, archive/restore, and merging a duplicate without losing its history |
 | `planner-math.test.mjs` | The planner's arithmetic as pure functions (overlapping periods, scaling, nutrition, card debits) |
+| `nutrition-and-deck.test.mjs` | The nutrition plausibility check, per-ingredient unit conversions, and the deck reporting what it can't count instead of zero |
 
 ## A caveat worth knowing
 

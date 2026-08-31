@@ -12,6 +12,7 @@ ALTER TABLE IF EXISTS ingredients         ENABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS ingredient_prices   ENABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS categories            ENABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS ingredient_categories ENABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS ingredient_units        ENABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS periods                    ENABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS ingredient_targets         ENABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS cooks                      ENABLE ROW LEVEL SECURITY;
@@ -101,6 +102,11 @@ CREATE POLICY "ingredient_prices: house members"
 
 CREATE POLICY "ingredient_categories: house members"
   ON ingredient_categories FOR ALL
+  USING (is_house_member((SELECT house_id FROM ingredients WHERE id = ingredient_id)))
+  WITH CHECK (is_house_member((SELECT house_id FROM ingredients WHERE id = ingredient_id)));
+
+CREATE POLICY "ingredient_units: house members"
+  ON ingredient_units FOR ALL
   USING (is_house_member((SELECT house_id FROM ingredients WHERE id = ingredient_id)))
   WITH CHECK (is_house_member((SELECT house_id FROM ingredients WHERE id = ingredient_id)));
 

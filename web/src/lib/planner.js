@@ -45,13 +45,48 @@ export const periodsCovering = (periods, dateStr) => periods.filter(p => withinP
  * fills those in by hand, and a blank simply counts as zero downstream rather
  * than blocking anything.
  */
-export function suggestNormalised(quantity, unit) {
+export function suggestNormalised(quantity, unit, conversions = []) {
   const qty = Number(quantity)
   if (!qty || isNaN(qty)) return null
+
+  // The generic converter first: grams, millilitres and their multiples.
   const parsed = parseUnitStr(`${qty}${unit ?? ''}`)
-  if (!parsed) return null
-  const { baseQty, baseUnit } = toBase(parsed.qty, parsed.unit)
-  return baseUnit === 'unit' ? null : baseQty
+  if (parsed) {
+    const { baseQty, baseUnit } = toBase(parsed.qty, parsed.unit)
+    if (baseUnit !== 'unit') return baseQty
+  }
+
+  // Then the ingredient's own measures. This is the whole point of them: "2
+  // tins" is meaningless in general and exact for tinned tomatoes, and without
+  // it the line normalises to null and silently leaves both the deck and the
+  // nutrition maths.
+  const match = findConversion(unit, conversions)
+  return match ? qty * Number(match.grams) : null
+}
+
+/**
+ * Match a recipe's unit word against an ingredient's own measures.
+ *
+ * Forgiving about the things people actually type: case, surrounding space, and
+ * the plural. A bare quantity ("2", meaning two onions) matches a measure
+ * named "each" or "unit", which is how a countable ingredient gets a weight.
+ */
+export function findConversion(unit, conversions = []) {
+  if (!conversions.length) return null
+  const want = String(unit ?? '').trim().toLowerCase()
+  const norm = c => String(c.label ?? '').trim().toLowerCase()
+
+  if (!want) return conversions.find(c => ['each', 'unit'].includes(norm(c))) ?? null
+
+  const exact = conversions.find(c => norm(c) === want)
+  if (exact) return exact
+
+  // "tins" → "tin", or a measure stored as "cloves" matched by "clove".
+  const singular = want.replace(/(?:es|s)$/, '')
+  return conversions.find(c => {
+    const n = norm(c)
+    return n === singular || n.replace(/(?:es|s)$/, '') === singular
+  }) ?? null
 }
 
 /**
@@ -95,14 +130,25 @@ export function unallocatedServings(component, allocations) {
  * `pending` — servings cooked under this period but not yet placed. Shown, but
  *             not subtracted, so an undistributed cook never reads as free
  *             while also not pretending to be eaten.
+ * `blind`   — cooked portions this stack could not count, and why.
  *
- * @returns {Object} ingredientId → { target, spent, pending, remaining }
+ * `blind` exists because the two things that make a line uncountable — the
+ * ingredient having no card weight, and the recipe line having no normalised
+ * quantity — used to be skipped in silence. A stack would then read "0 spent"
+ * after you'd cooked two kilos of the stuff, which is worse than reading
+ * nothing at all: it's a confident wrong answer. Nutrition already had this
+ * right (it collects a `missing` set); the deck now matches it.
+ *
+ * @returns {Object} ingredientId → { target, spent, pending, remaining, blind }
  */
 export function deckState({ period, ingredients, targets, components, allocations }) {
   const byId = new Map(components.map(c => [c.id, c]))
   const state = {}
 
-  const ensure = id => (state[id] ??= { target: 0, spent: 0, pending: 0, remaining: 0 })
+  const ensure = id => (state[id] ??= {
+    target: 0, spent: 0, pending: 0, remaining: 0,
+    blind: { noCardWeight: false, unconvertedLines: 0 },
+  })
 
   for (const t of targets) {
     if (period && t.period_id !== period.id) continue
@@ -115,17 +161,23 @@ export function deckState({ period, ingredients, targets, components, allocation
     return w > 0 ? w : null
   }
 
+  // Note why a line couldn't be counted, rather than dropping it.
+  const count = (line, share, bucket) => {
+    const st = ensure(line.ingredient_id)
+    const w = cardWeight(line.ingredient_id)
+    if (!w) st.blind.noCardWeight = true
+    if (line.qty_total == null) st.blind.unconvertedLines += 1
+    if (!w || line.qty_total == null) return
+    st[bucket] += (Number(line.qty_total) * share) / w
+  }
+
   // Spent: every allocation whose date falls in the period, ignoring ownership.
   for (const a of allocations) {
     if (period && !withinPeriod(a.on_date, period)) continue
     const comp = byId.get(a.component_id)
     if (!comp) continue
-    for (const line of comp.cook_component_ingredients ?? []) {
-      const w = cardWeight(line.ingredient_id)
-      if (!w || line.qty_total == null) continue
-      const share = Number(a.servings) / (Number(comp.servings_planned) || 1)
-      ensure(line.ingredient_id).spent += (Number(line.qty_total) * share) / w
-    }
+    const share = Number(a.servings) / (Number(comp.servings_planned) || 1)
+    for (const line of comp.cook_component_ingredients ?? []) count(line, share, 'spent')
   }
 
   // Pending: cooked under this period, not yet placed anywhere.
@@ -134,16 +186,34 @@ export function deckState({ period, ingredients, targets, components, allocation
     if (period && comp.cooks?.period_id !== period.id) continue
     const left = unallocatedServings(comp, allocations)
     if (left <= 0) continue
-    for (const line of comp.cook_component_ingredients ?? []) {
-      const w = cardWeight(line.ingredient_id)
-      if (!w || line.qty_total == null) continue
-      const share = left / (Number(comp.servings_planned) || 1)
-      ensure(line.ingredient_id).pending += (Number(line.qty_total) * share) / w
-    }
+    const share = left / (Number(comp.servings_planned) || 1)
+    for (const line of comp.cook_component_ingredients ?? []) count(line, share, 'pending')
   }
 
-  for (const s of Object.values(state)) s.remaining = s.target - s.spent
+  for (const [id, s] of Object.entries(state)) {
+    s.remaining = s.target - s.spent
+    // A stack you're aiming at but can't weigh can never be spent — say so even
+    // before anything has been cooked.
+    if (s.target > 0 && !cardWeight(Number(id))) s.blind.noCardWeight = true
+    s.uncountable = s.blind.noCardWeight || s.blind.unconvertedLines > 0
+  }
   return state
+}
+
+/**
+ * Everything the deck couldn't account for, for a banner above the rail.
+ * Named ingredients rather than a bare count, because the fix is per-ingredient.
+ */
+export function deckBlindSpots(deck, ingredients) {
+  const noWeight = []
+  const unconverted = []
+  for (const ing of ingredients) {
+    const st = deck[ing.id]
+    if (!st) continue
+    if (st.blind?.noCardWeight) noWeight.push(ing.name)
+    if (st.blind?.unconvertedLines > 0) unconverted.push(ing.name)
+  }
+  return { noWeight, unconverted, total: noWeight.length + unconverted.length }
 }
 
 /** Round to halves for the rail; the raw grams stay available on inspection. */

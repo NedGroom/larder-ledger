@@ -1,13 +1,12 @@
 import { useState, useRef, useEffect } from 'react'
 import { supabase } from '../lib/supabase.js'
 import { useApp, defaultReceiptSession } from '../App.jsx'
-import { PROVIDERS, extractPrices } from '../lib/ai.js'
+import { PROVIDERS, extractPrices, LS_PROVIDER, LS_KEY } from '../lib/ai.js'
 import logger from '../lib/logger.js'
-import { findOrCreateIngredient, recordPurchase } from '../lib/larder.js'
+import { findOrCreateIngredient, findOrCreateCategory, recordPurchase } from '../lib/larder.js'
+import { checkNutrition, nutritionPatch } from '../lib/nutrition.js'
 
 const PROVIDER_KEYS = Object.keys(PROVIDERS)
-const LS_PROVIDER = 'll_ai_provider'
-const LS_KEY      = 'll_ai_key'
 
 const today = () => new Date().toISOString().slice(0, 10)
 
@@ -162,6 +161,43 @@ function findByName(ingredients, name) {
 }
 
 // ── Candidate list + save ─────────────────────────────────────────────────────
+/**
+ * Everything a receipt knows about an ingredient beyond its name.
+ *
+ * Both of these were being thrown away. The category is why every receipt-born
+ * ingredient landed in "Uncategorised", and the nutrition estimate is the
+ * difference between a larder the planner can reason about and one where most
+ * of the day's calories read as unknown. Neither is treated as gospel: the
+ * category is a first filing the user can change, and the figures are written
+ * with nutrition_source 'estimated' so the panel says so and a photographed
+ * label silently wins.
+ *
+ * Failures here are swallowed on purpose — a category that wouldn't save must
+ * not cost you the purchase, which is the thing you actually came to record.
+ */
+async function dressNewIngredient(ing, row) {
+  try {
+    if (row.category?.trim()) {
+      const cat = await findOrCreateCategory({ houseId: ing.house_id, name: row.category.trim() })
+      await supabase.from('ingredient_categories')
+        .insert({ ingredient_id: ing.id, category_id: cat.id })
+    }
+  } catch (e) { logger.warn?.('category from receipt failed', { err: e.message }) }
+
+  try {
+    const est = row.nutrition
+    if (est && Object.values(est).some(v => v != null)) {
+      // Even a guess has to obey physics. A model that hallucinates 3000 kcal
+      // per 100g would otherwise poison every plan this ingredient appears in.
+      const verdict = checkNutrition(est)
+      if (verdict.severity !== 'error') {
+        await supabase.from('ingredients')
+          .update(nutritionPatch(est, 'estimated')).eq('id', ing.id)
+      }
+    }
+  } catch (e) { logger.warn?.('nutrition estimate from receipt failed', { err: e.message }) }
+}
+
 function CandidateTable({ candidates, ingredients, houseMembers, houseId, storeId, ensureList, onPurchases, onItemSaved, onDone }) {
   const [rows, setRows] = useState(candidates.map(c => ({
     ...c,
@@ -212,6 +248,10 @@ function CandidateTable({ candidates, ingredients, houseMembers, houseId, storeI
       try {
         const ing = await findOrCreateIngredient({ houseId, name, keep: true, unitSizeUnit: row.unit })
         ingredientId = ing.id
+        // Only dress a genuinely new row. Re-scanning a receipt mustn't refile
+        // an ingredient the house has since categorised by hand, or overwrite
+        // figures read off a real packet with a guess.
+        if (ing._created) await dressNewIngredient(ing, row)
       } catch (e) { return fail(`Failed to create "${name}": ${e.message}`) }
     }
 
@@ -626,7 +666,7 @@ export default function Receipts({ mode = 'standalone', listId = null, lockedSto
 
   const {
     plainText, candidates, storeId, extractErr,
-    inputMode, stores, ingredients, houseMembers, storesLoaded,
+    inputMode, stores, ingredients, houseMembers, categories, storesLoaded,
     aiFees, aiDiscounts, aiReceiptTotal, savedItems, showSettlement,
     aiStoreName, purchaseDate, receiptListId,
   } = sessionState
@@ -674,15 +714,17 @@ export default function Receipts({ mode = 'standalone', listId = null, lockedSto
    * same ingredient gets invented twice.
    */
   async function ensureLoaded({ refresh = false } = {}) {
-    if (storesLoaded && !refresh) return { stores, ingredients, houseMembers, storeId }
-    const [{ data: s }, { data: i }, { data: hu }] = await Promise.all([
+    if (storesLoaded && !refresh) return { stores, ingredients, houseMembers, categories, storeId }
+    const [{ data: s }, { data: i }, { data: hu }, { data: cs }] = await Promise.all([
       supabase.from('stores').select('*').eq('house_id', house.id).order('name'),
       supabase.from('ingredients').select('id,name').eq('house_id', house.id).order('name'),
       supabase.from('house_users').select('users(id,name,email)').eq('house_id', house.id),
+      supabase.from('categories').select('id,name').eq('house_id', house.id).order('name'),
     ])
     const members = (hu ?? []).map(r => r.users).filter(Boolean)
     const storeList = s ?? []
     const ingList = i ?? []
+    const catList = cs ?? []
     // Keep whatever shop is already chosen — a refresh mid-session mustn't
     // silently move the receipt to a different shop.
     const firstStore = storeId || (storeList.length ? storeList[0].id : '')
@@ -690,10 +732,11 @@ export default function Receipts({ mode = 'standalone', listId = null, lockedSto
       stores: storeList,
       ingredients: ingList,
       houseMembers: members,
+      categories: catList,
       storeId: firstStore,
       storesLoaded: true,
     })
-    return { stores: storeList, ingredients: ingList, houseMembers: members, storeId: firstStore }
+    return { stores: storeList, ingredients: ingList, houseMembers: members, categories: catList, storeId: firstStore }
   }
 
   function saveConfig() {
@@ -776,6 +819,7 @@ export default function Receipts({ mode = 'standalone', listId = null, lockedSto
         content, contentType, imageMime,
         knownIngredients: loaded.ingredients.map(i => i.name),
         knownStores: loaded.stores.map(s => s.name),
+        knownCategories: loaded.categories.map(c => c.name),
       })
 
       // Take the shop and date off the receipt as a starting point — the user

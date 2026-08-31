@@ -29,6 +29,7 @@ export function makeDb(overrides = {}) {
     cook_component_ingredients: [],
     meal_categories: [],
     allocations: [],
+    ingredient_units: [],
     ...overrides,
   }
 }
@@ -111,6 +112,9 @@ export async function installRoutes(page, db) {
         } else if (v.startsWith('in.')) {
           const set = v.slice(3).replace(/^\(|\)$/g, '').split(',').map(x => x.replace(/"/g, ''))
           rows = rows.filter(r => set.includes(String(r[k])))
+        } else if (v.startsWith('ilike.')) {
+          const want = v.slice(6).replace(/^\*|\*$/g, '').toLowerCase()
+          rows = rows.filter(r => String(r[k] ?? '').toLowerCase() === want)
         } else if (v.startsWith('is.')) {
           const want = v.slice(3)
           rows = rows.filter(r => want === 'null' ? r[k] == null : String(r[k]) === want)

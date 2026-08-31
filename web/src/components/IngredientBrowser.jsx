@@ -1,6 +1,14 @@
 import { useState, useMemo } from 'react'
 import { groupByCategory, findOrCreateIngredient } from '../lib/larder.js'
 
+/** Stock reads as a shelf quantity, not a measurement: 1.2kg, not 1200g. */
+function formatStock(qty) {
+  const n = Number(qty)
+  if (!isFinite(n)) return ''
+  if (n >= 1000) return `${Math.round(n / 100) / 10}k`
+  return String(Math.round(n * 10) / 10)
+}
+
 /**
  * IngredientBrowser — one way to scroll the larder.
  *
@@ -49,8 +57,11 @@ export function IngredientCard({ ing, price, mode, qty = 0, onQtyChange, onToggl
         </span>
       )}
 
-      <span className={`pill ${ing.has_any ? 'green' : 'red'}`}>
-        {ing.has_any ? 'In stock' : 'Missing'}
+      <span className={`pill ${ing.has_any ? 'green' : 'red'}`}
+            title={ing.stock_qty != null ? 'Counted up from what you have bought — edit it in the ingredient panel' : undefined}>
+        {ing.has_any
+          ? (ing.stock_qty != null ? `${formatStock(ing.stock_qty)}${ing.stock_unit ?? ''}` : 'In stock')
+          : 'Missing'}
       </span>
 
       <button

@@ -1,5 +1,5 @@
 import { supabase } from './supabase.js'
-import { defaultCanonicalRateUnit, calcCanonicalRate } from './units.js'
+import { defaultCanonicalRateUnit, calcCanonicalRate, parseUnitStr, toBase } from './units.js'
 
 /**
  * larder.js — the shared vocabulary of the Larder.
@@ -298,8 +298,46 @@ export async function recordPurchase({
     row = data
   }
 
-  await supabase.from('ingredients').update({ has_any: true }).eq('id', ingredientId)
+  await stockAfterPurchase(ingredientId, qty, unitSizeUnit, +1)
   return row
+}
+
+/**
+ * Move the recorded stock quantity when something is bought or un-bought.
+ *
+ * Buying two 400g tins adds 800g, because that is what walked through the door.
+ * Where the pack size isn't a weight we can read ("6pk", or nothing at all) the
+ * quantity is left alone rather than guessed at — `has_any` still says the house
+ * has some, which is the honest claim.
+ *
+ * A stock figure that has never been set stays null on a refund: inventing a
+ * negative would be worse than admitting we don't know.
+ */
+async function stockAfterPurchase(ingredientId, qty, unitSizeUnit, sign) {
+  const { data: ing } = await supabase
+    .from('ingredients').select('stock_qty, stock_unit').eq('id', ingredientId).single()
+
+  const parsed = unitSizeUnit ? parseUnitStr(unitSizeUnit) : null
+  const base = parsed ? toBase(parsed.qty, parsed.unit) : null
+  const patch = { has_any: sign > 0 }
+
+  if (base && base.baseUnit !== 'unit') {
+    const delta = base.baseQty * qty * sign
+    // Only add to a figure already in the same unit; mixing g into a count of
+    // tins would produce a number that means nothing.
+    const compatible = ing?.stock_unit == null || ing.stock_unit === base.baseUnit
+    if (compatible && (sign > 0 || ing?.stock_qty != null)) {
+      const next = Math.max(0, Number(ing?.stock_qty ?? 0) + delta)
+      patch.stock_qty = Math.round(next * 100) / 100
+      patch.stock_unit = base.baseUnit
+    }
+  }
+
+  // Taking the last of something back off doesn't prove the house has none —
+  // it may have had some already — so `has_any` is only ever set, not cleared.
+  if (sign < 0) delete patch.has_any
+
+  await supabase.from('ingredients').update(patch).eq('id', ingredientId)
 }
 
 /**
@@ -313,6 +351,8 @@ export async function undoPurchase(item) {
   if (item.price_id) {
     await supabase.from('ingredient_prices').delete().eq('id', item.price_id)
   }
+  await stockAfterPurchase(
+    item.ingredient_id, Math.max(1, Number(item.quantity) || 1), item.unit_size_unit, -1)
   const patch = { bought: false, bought_at: null, price_paid: null, price_id: null }
   const { data, error } = await supabase
     .from('shopping_list_items')
@@ -320,6 +360,51 @@ export async function undoPurchase(item) {
     .select('*, ingredients(name), meals(name)').single()
   if (error) throw new Error(error.message)
   return data
+}
+
+// ── What an odd unit weighs ──────────────────────────────────────────────────
+
+/**
+ * An ingredient's own measures: "1 tin = 400 g", "1 handful = 30 g".
+ *
+ * These exist because the generic converter only knows grams, millilitres and
+ * their multiples. A recipe line in any other unit normalised to null, and a
+ * null quantity is invisible to both the deck and the nutrition maths — the
+ * planner would report zero rather than admit it couldn't convert.
+ */
+export async function loadIngredientUnits(ingredientId) {
+  const { data } = await supabase
+    .from('ingredient_units').select('*').eq('ingredient_id', ingredientId).order('label')
+  return data ?? []
+}
+
+export async function addIngredientUnit(ingredientId, label, grams) {
+  const clean = String(label ?? '').trim()
+  const g = Number(grams)
+  if (!clean) throw new Error('Name the measure (e.g. "tin")')
+  if (!(g > 0)) throw new Error('Give it a weight in grams')
+  const { data, error } = await supabase
+    .from('ingredient_units')
+    .insert({ ingredient_id: ingredientId, label: clean, grams: g })
+    .select('*').single()
+  if (error) {
+    // One weight per measure per ingredient — re-adding is a correction.
+    if (/duplicate|unique/i.test(error.message)) {
+      const { data: fixed, error: e2 } = await supabase
+        .from('ingredient_units').update({ grams: g })
+        .eq('ingredient_id', ingredientId).ilike('label', clean)
+        .select('*').single()
+      if (e2) throw new Error(e2.message)
+      return fixed
+    }
+    throw new Error(error.message)
+  }
+  return data
+}
+
+export async function deleteIngredientUnit(id) {
+  const { error } = await supabase.from('ingredient_units').delete().eq('id', id)
+  if (error) throw new Error(error.message)
 }
 
 // ── Editing and retiring an ingredient ───────────────────────────────────────
@@ -428,6 +513,22 @@ export async function mergeIngredients(sourceId, targetId) {
   // A bare-ingredient cook component points at it directly too.
   await supabase.from('cook_components').update({ ingredient_id: targetId }).eq('ingredient_id', sourceId)
 
+  // Measures: unique per (ingredient, lowercased label). The target's own
+  // weight for a measure wins — it's the row being kept.
+  const [{ data: srcUnits }, { data: tgtUnits }] = await Promise.all([
+    supabase.from('ingredient_units').select('id, label').eq('ingredient_id', sourceId),
+    supabase.from('ingredient_units').select('label').eq('ingredient_id', targetId),
+  ])
+  const haveLabels = new Set((tgtUnits ?? []).map(u => String(u.label).toLowerCase()))
+  for (const u of (srcUnits ?? [])) {
+    if (haveLabels.has(String(u.label).toLowerCase())) {
+      await supabase.from('ingredient_units').delete().eq('id', u.id)
+    } else {
+      await supabase.from('ingredient_units').update({ ingredient_id: targetId }).eq('id', u.id)
+      haveLabels.add(String(u.label).toLowerCase())
+    }
+  }
+
   // Categories: primary key is (ingredient, category), so skip any the target has.
   const [{ data: srcCats }, { data: tgtCats }] = await Promise.all([
     supabase.from('ingredient_categories').select('category_id').eq('ingredient_id', sourceId),
@@ -507,6 +608,7 @@ export async function mergeIngredients(sourceId, targetId) {
   if (src && tgt) {
     const fill = {}
     for (const f of ['card_weight', 'qualitative_note', 'canonical_rate_unit', 'canonical_unit',
+                     'pack_grams', 'nutrition_source', 'nutrition_noted_at',
                      'kcal_per_100', 'protein_per_100', 'fibre_per_100', 'carbs_per_100', 'fat_per_100']) {
       if (tgt[f] == null && src[f] != null) fill[f] = src[f]
     }

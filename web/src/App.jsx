@@ -36,6 +36,7 @@ export const defaultReceiptSession = {
   stores:         [],
   ingredients:    [],
   houseMembers:   [],
+  categories:     [],
   storesLoaded:   false,
   // AI-extracted receipt-level data
   aiFees:         [],    // [{ description, amount }]

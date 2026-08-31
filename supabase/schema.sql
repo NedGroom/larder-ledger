@@ -44,13 +44,18 @@ CREATE TABLE ingredients (
   stock_qty NUMERIC,                    -- optional detail beside has_any
   stock_unit TEXT,
   card_weight NUMERIC,                  -- g/ml one deck card of this is worth
-  qualitative_note TEXT,                -- "1 handful ~ 30g", the user's own reference
+  pack_grams NUMERIC,                   -- what the photographed packet said it weighed
+  qualitative_note TEXT,                -- free-text note; real conversions live in ingredient_units
   -- Nutrients per 100g/ml. NULL means "not looked up", never zero.
   kcal_per_100 NUMERIC,
   protein_per_100 NUMERIC,
   fibre_per_100 NUMERIC,
   carbs_per_100 NUMERIC,
   fat_per_100 NUMERIC,
+  -- Where those figures came from: 'label' (photographed packet), 'estimated'
+  -- (guessed by the model from the name), 'manual' (typed in).
+  nutrition_source TEXT CHECK (nutrition_source IN ('label', 'estimated', 'manual')),
+  nutrition_noted_at TIMESTAMPTZ,
   created_by BIGINT REFERENCES users(id),
   created_at TIMESTAMPTZ DEFAULT now(),
   updated_at TIMESTAMPTZ DEFAULT now()
@@ -80,6 +85,21 @@ CREATE TABLE ingredient_categories (
 );
 
 CREATE INDEX idx_ingredient_categories_category ON ingredient_categories(category_id);
+
+-- What an awkward recipe unit weighs, per ingredient: "1 tin = 400 g".
+-- Scoped to the ingredient because a tin of tomatoes and a tin of anchovies
+-- are not the same weight. Read by suggestNormalised when a recipe line uses a
+-- unit the generic converter can't handle.
+CREATE TABLE ingredient_units (
+  id BIGSERIAL PRIMARY KEY,
+  ingredient_id BIGINT NOT NULL REFERENCES ingredients(id) ON DELETE CASCADE,
+  label TEXT NOT NULL,                  -- 'tin', 'handful', 'clove'
+  grams NUMERIC NOT NULL CHECK (grams > 0),
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE UNIQUE INDEX idx_ingredient_units_unique ON ingredient_units(ingredient_id, LOWER(label));
+CREATE INDEX idx_ingredient_units_ingredient ON ingredient_units(ingredient_id);
 
 -- Stores dishes and their variants (see parent_id). UI calls them Dishes/Variants.
 CREATE TABLE meals (

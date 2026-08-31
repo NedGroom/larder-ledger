@@ -931,3 +931,37 @@ hr.divider { border: none; border-top: 1px solid #ebebeb; margin: 1rem 0; }
   color: inherit; text-align: left; text-decoration: underline dotted;
 }
 .ing-panel-section.ing-danger { flex: 0 0 auto; }
+
+/* ── Stacks the deck can't count ────────────────────────────────────── */
+.deck-stack--blind { opacity: .85; border-style: dashed; }
+.deck-stack--blind .deck-stack-count { color: var(--color-text-muted); }
+.deck-stack-blind { font-size: .62rem; color: var(--color-text-muted); line-height: 1.15; }
+.deck-blind-banner { font-size: .8rem; line-height: 1.45; }
+.msg.warn {
+  background: rgba(251,191,36,.12); color: #b45309;
+  border: 1px solid rgba(251,191,36,.35); border-radius: 8px; padding: .5rem .6rem;
+}
+
+/* ── Per-ingredient measures ────────────────────────────────────────── */
+.measure-list { display: flex; flex-wrap: wrap; gap: .35rem; margin-bottom: .5rem; }
+.measure-chip {
+  display: inline-flex; align-items: center; gap: .35rem;
+  background: var(--color-surface2); border-radius: 12px; padding: .18rem .5rem; font-size: .78rem;
+}
+.measure-chip button { background: none; border: none; cursor: pointer; color: var(--color-text-muted); padding: 0; }
+.measure-chip button:hover { color: #c0392b; }
+.measure-add { display: flex; align-items: center; gap: .35rem; flex-wrap: wrap; }
+.measure-add input { margin: 0; max-width: 92px; }
+.ing-norm-warn { font-size: .68rem; color: #b45309; white-space: nowrap; }
+
+/* ── Reading the nutrition off the packet ───────────────────────────── */
+.label-capture { margin: .5rem 0 .7rem; }
+.label-capture-btn { display: inline-flex; align-items: center; cursor: pointer; }
+.label-reading {
+  margin-top: .5rem; padding: .6rem; border-radius: 8px;
+  background: var(--color-surface2); border: 1px solid var(--color-border);
+}
+.label-reading-name { font-weight: 600; font-size: .9rem; margin-bottom: .4rem; }
+.label-reading-grid { display: flex; flex-wrap: wrap; gap: .75rem; margin-bottom: .5rem; }
+.label-reading-cell { display: flex; flex-direction: column; font-size: .82rem; }
+.label-disagrees { color: #b45309; }

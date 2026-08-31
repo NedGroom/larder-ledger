@@ -4,8 +4,11 @@ import { calcCanonicalRate, formatRate } from '../lib/units.js'
 import {
   findOrCreateCategory, setIngredientCategories, renameIngredient, ingredientUsage,
   setIngredientArchived, deleteIngredient, deletePrice, mergeIngredients,
+  loadIngredientUnits, addIngredientUnit, deleteIngredientUnit,
 } from '../lib/larder.js'
 import { NUTRIENTS } from '../lib/planner.js'
+import { extractNutrition, storedAiConfig, PROVIDERS } from '../lib/ai.js'
+import { checkNutrition, nutritionPatch } from '../lib/nutrition.js'
 
 // ── Price comparison ──────────────────────────────────────────────────────────
 /**
@@ -242,6 +245,13 @@ function PlannerFacts({ ing, onUpdated }) {
       stock_unit: form.stock_unit.trim() || null,
       ...Object.fromEntries(NUTRIENTS.map(n => [n.per100, form[n.per100] === '' ? null : Number(form[n.per100])])),
     }
+    // Typing a figure by hand supersedes whatever a photo or a guess put there.
+    const touchedNutrition = NUTRIENTS.some(n =>
+      (patch[n.per100] ?? null) !== (ing[n.per100] ?? null))
+    if (touchedNutrition) {
+      patch.nutrition_source = NUTRIENTS.some(n => patch[n.per100] != null) ? 'manual' : null
+      patch.nutrition_noted_at = new Date().toISOString()
+    }
     // Recording a quantity implies we have some; clearing it says nothing either way.
     if (patch.stock_qty > 0) patch.has_any = true
     const { error } = await supabase.from('ingredients').update(patch).eq('id', ing.id)
@@ -260,6 +270,8 @@ function PlannerFacts({ ing, onUpdated }) {
           {ing.card_weight ? `1 card = ${ing.card_weight}g` : 'no card weight'}
           {' · '}
           {NUTRIENTS.filter(n => ing[n.per100] != null).length}/{NUTRIENTS.length} nutrients
+          {ing.nutrition_source === 'estimated' && ' (estimated)'}
+          {ing.nutrition_source === 'label' && ' (off the packet)'}
         </span>
         <span>{open ? '▲' : '▼'}</span>
       </button>
@@ -271,6 +283,15 @@ function PlannerFacts({ ing, onUpdated }) {
             Leave a nutrient blank if you haven't looked it up — blank is treated as
             unknown, not as zero.
           </p>
+
+          <LabelCapture ing={ing} onApplied={onUpdated} />
+
+          {ing.nutrition_source === 'estimated' && (
+            <p className="msg warn" style={{ fontSize: '.78rem' }}>
+              These figures were <strong>estimated from the name</strong>, not read off a
+              packet. Good enough to plan with; photograph the label to replace them.
+            </p>
+          )}
           <div className="field-row">
             <label>1 card = (g/ml)
               <input type="number" min="1" step="1" value={form.card_weight ?? ''}
@@ -305,6 +326,202 @@ function PlannerFacts({ ing, onUpdated }) {
           {msg && <p className="msg ok" style={{ marginTop: '.3rem', fontSize: '.78rem' }}>{msg}</p>}
         </>
       )}
+    </div>
+  )
+}
+
+// ── Reading the nutrition off the packet ──────────────────────────────────────
+/**
+ * Photograph the back of the packet instead of typing five numbers off it.
+ *
+ * The numbers are never written straight through. A reading goes past two
+ * checks first: the arithmetic in `nutrition.js`, which runs on every provider
+ * and catches a slipped decimal point; and, where the provider can search the
+ * web, a comparison against what this food is typically like, which catches the
+ * reading that is internally consistent but taken off the wrong column. Both
+ * are shown to the user, who confirms — the app never silently accepts a figure
+ * it has reason to doubt.
+ */
+function LabelCapture({ ing, onApplied }) {
+  const [reading, setReading] = useState(null)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const [saving, setSaving] = useState(false)
+  const { provider, apiKey } = storedAiConfig()
+  const conf = PROVIDERS[provider]
+  const canRead = !!conf?.extractNutrition && (!conf.requiresApiKey || !!apiKey)
+
+  async function onFile(e) {
+    const file = e.target.files?.[0]
+    e.target.value = ''            // let the same photo be retried
+    if (!file) return
+    setBusy(true); setErr(''); setReading(null)
+    try {
+      const b64 = await new Promise((res, rej) => {
+        const r = new FileReader()
+        r.onload = () => res(String(r.result).split(',')[1])
+        r.onerror = rej
+        r.readAsDataURL(file)
+      })
+      setReading(await extractNutrition({ provider, apiKey, content: b64, imageMime: file.type }))
+    } catch (e) { setErr(e.message) }
+    setBusy(false)
+  }
+
+  async function apply() {
+    setSaving(true); setErr('')
+    const patch = nutritionPatch(reading, 'label')
+    const { error } = await supabase.from('ingredients').update(patch).eq('id', ing.id)
+    if (error) { setErr(error.message); setSaving(false); return }
+    onApplied({ ...ing, ...patch })
+    setReading(null)
+    setSaving(false)
+  }
+
+  const verdict = reading ? checkNutrition(reading) : null
+  const online = reading?.verified
+
+  if (!canRead) {
+    return (
+      <p className="ing-panel-hint">
+        📷 Reading a label from a photo needs an image-capable AI provider — set one
+        up under “Scan a receipt” on the Shops tab, and it'll appear here.
+      </p>
+    )
+  }
+
+  return (
+    <div className="label-capture">
+      <label className="btn small secondary label-capture-btn">
+        {busy ? <span className="spinner" /> : '📷 Read the label'}
+        <input type="file" accept="image/*" capture="environment" onChange={onFile} hidden disabled={busy} />
+      </label>
+      {conf.verifiesOnline
+        ? <span className="meta"> checked against the web before it's offered</span>
+        : <span className="meta"> arithmetic-checked ({conf.name} can't search the web)</span>}
+
+      {err && <p className="msg err">{err}</p>}
+
+      {reading && (
+        <div className="label-reading">
+          {reading.productName && <div className="label-reading-name">{reading.productName}</div>}
+
+          <div className="label-reading-grid">
+            {NUTRIENTS.map(n => {
+              const key = n.key === 'kcal' ? 'kcal' : n.key
+              const v = reading[key]
+              return (
+                <span key={n.key} className="label-reading-cell">
+                  <span className="meta">{n.label}</span>
+                  <strong>{v == null ? '—' : v}</strong>
+                </span>
+              )
+            })}
+            {reading.packGrams != null && (
+              <span className="label-reading-cell">
+                <span className="meta">Pack</span><strong>{reading.packGrams}g</strong>
+              </span>
+            )}
+          </div>
+
+          {verdict.severity !== 'ok' && (
+            <p className="msg err">
+              <strong>Doesn't add up.</strong> {verdict.issues.join('. ')}.
+              {' '}Re-take the photo, or correct the figures by hand below after saving.
+            </p>
+          )}
+          {verdict.severity === 'ok' && verdict.expectedKcal != null && (
+            <p className="ing-panel-hint">
+              ✓ The macros reconstruct to about {verdict.expectedKcal} kcal, which matches the label.
+            </p>
+          )}
+
+          {online && (
+            <p className={`ing-panel-hint ${online.agrees ? '' : 'label-disagrees'}`}>
+              {online.agrees ? '✓' : '⚠'} Web check:{' '}
+              {online.comment || (online.agrees ? 'consistent with published figures' : 'differs from published figures')}
+              {online.typicalKcal != null && ` (typically ~${online.typicalKcal} kcal/100g)`}
+            </p>
+          )}
+          {reading.notes && <p className="ing-panel-hint">Note: {reading.notes}</p>}
+          {reading.confidence !== 'high' && (
+            <p className="ing-panel-hint">Read with <strong>{reading.confidence}</strong> confidence.</p>
+          )}
+
+          <div className="btn-row">
+            <button className="btn small" onClick={apply} disabled={saving}>
+              {saving ? <span className="spinner" /> : (verdict.severity === 'ok' ? 'Use these' : 'Use anyway')}
+            </button>
+            <button className="btn small secondary" onClick={() => setReading(null)}>Discard</button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── What an odd unit weighs ───────────────────────────────────────────────────
+/**
+ * The ingredient's own measures.
+ *
+ * This replaces the free-text "rough measures" note, which held exactly the
+ * right fact in a form nothing could read. A recipe line saying "2 tins" now
+ * resolves to 800g, which means it counts against the deck and contributes its
+ * nutrients — where before it normalised to null and vanished from both.
+ */
+function Measures({ ing, units, onChanged }) {
+  const [label, setLabel] = useState('')
+  const [grams, setGrams] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+
+  async function add(e) {
+    e?.preventDefault()
+    setBusy(true); setErr('')
+    try {
+      await addIngredientUnit(ing.id, label, grams)
+      setLabel(''); setGrams('')
+      await onChanged()
+    } catch (e) { setErr(e.message) }
+    setBusy(false)
+  }
+
+  async function remove(u) {
+    setBusy(true); setErr('')
+    try { await deleteIngredientUnit(u.id); await onChanged() } catch (e) { setErr(e.message) }
+    setBusy(false)
+  }
+
+  return (
+    <div className="ing-panel-section">
+      <div className="ing-panel-label">Measures</div>
+      <p className="ing-panel-hint">
+        What an awkward unit weighs, for this ingredient. A recipe line in a unit
+        listed here converts automatically; one in a unit that isn't is invisible
+        to the deck and to nutrition. Use <code>each</code> for a countable thing
+        (one onion, one egg).
+      </p>
+
+      {units.length > 0 && (
+        <div className="measure-list">
+          {units.map(u => (
+            <span key={u.id} className="measure-chip">
+              1 {u.label} = {Number(u.grams)}g
+              <button title="Remove" onClick={() => remove(u)} disabled={busy}>✕</button>
+            </span>
+          ))}
+        </div>
+      )}
+
+      <form className="measure-add" onSubmit={add}>
+        <input value={label} onChange={e => setLabel(e.target.value)} placeholder="tin" aria-label="Measure name" />
+        <span className="meta">=</span>
+        <input type="number" min="0" step="any" value={grams} onChange={e => setGrams(e.target.value)}
+               placeholder="400" aria-label="Grams" />
+        <span className="meta">g</span>
+        <button className="btn small secondary" type="submit" disabled={busy || !label.trim() || !grams}>Add</button>
+      </form>
+      {err && <p className="msg err">{err}</p>}
     </div>
   )
 }
@@ -450,6 +667,7 @@ export default function IngredientPanel({
   const [prices, setPrices] = useState(null)
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState('')
+  const [units, setUnits] = useState([])
   const [nameDraft, setNameDraft] = useState(ing.name)
   const [nameErr, setNameErr] = useState('')
   const [clash, setClash] = useState(null)   // the ingredient a rename ran into
@@ -505,12 +723,15 @@ export default function IngredientPanel({
     } catch (e) { setMsg('Error: ' + e.message) }
   }
 
+  const fetchUnits = async () => setUnits(await loadIngredientUnits(ing.id))
+
   useEffect(() => {
     setCanonRateUnit(ing.canonical_rate_unit || '')
     setCatIds(ing.categoryIds ?? [])
     setNameDraft(ing.name)
     setNameErr(''); setClash(null)
     fetchPrices()
+    fetchUnits()
   }, [ing.id])
 
   // Categories save as you tick them — no separate save button to forget.
@@ -624,6 +845,8 @@ export default function IngredientPanel({
           </div>
           {msg && <p className="msg ok" style={{ marginTop: '.3rem', fontSize: '.78rem' }}>{msg}</p>}
         </div>
+
+        <Measures ing={ing} units={units} onChanged={fetchUnits} />
 
         <DangerZone
           ing={ing}
