@@ -3,7 +3,10 @@ import { supabase } from '../lib/supabase.js'
 import { useApp } from '../App.jsx'
 import IngredientBrowser from '../components/IngredientBrowser.jsx'
 import IngredientPanel, { CategoryPicker } from '../components/IngredientPanel.jsx'
-import { loadLarder, loadPrices, priceFor, setIngredientCategories, setIngredientArchived } from '../lib/larder.js'
+import {
+  loadLarder, loadPrices, priceFor, setIngredientCategories, setIngredientArchived,
+  loadLastBought, setIngredientStock,
+} from '../lib/larder.js'
 
 export default function Pantry() {
   const { house } = useApp()
@@ -12,6 +15,7 @@ export default function Pantry() {
   const [showArchived, setShowArchived] = useState(false)
   const [categories, setCategories] = useState([])
   const [pricesByIng, setPricesByIng] = useState({})
+  const [lastBought, setLastBought] = useState({})
   const [loading, setLoading] = useState(true)
   const [selected, setSelected] = useState(null)   // ingredient panel
 
@@ -32,7 +36,10 @@ export default function Pantry() {
     setIngredients(ings)
     setArchived(gone)
     setCategories(cats)
-    setPricesByIng(await loadPrices(ings.map(i => i.id)))
+    const ids = ings.map(i => i.id)
+    const [prices, bought] = await Promise.all([loadPrices(ids), loadLastBought(ids)])
+    setPricesByIng(prices)
+    setLastBought(bought)
     setLoading(false)
   }, [house.id])
 
@@ -105,6 +112,25 @@ export default function Pantry() {
     setIngredients(prev => prev.filter(i => i.id !== gone.id))
     setArchived(prev => prev.filter(i => i.id !== gone.id))
     setSelected(null)
+  }
+
+  /**
+   * Correct what's on the shelf.
+   *
+   * Optimistic, because the field is debounced and a round trip after every
+   * keystroke pause would make typing feel laggy. On failure the row snaps
+   * back to what the database still holds rather than showing a number that
+   * was never saved.
+   */
+  async function changeStock(ing, qty, unit) {
+    const before = { stock_qty: ing.stock_qty, stock_unit: ing.stock_unit, has_any: ing.has_any }
+    try {
+      const patch = await setIngredientStock(ing.id, qty, unit)
+      setIngredients(prev => prev.map(i => i.id === ing.id ? { ...i, ...patch } : i))
+    } catch (e) {
+      setIngredients(prev => prev.map(i => i.id === ing.id ? { ...i, ...before } : i))
+      setMsg({ text: `Couldn't save ${ing.name}: ${e.message}`, ok: false })
+    }
   }
 
   async function restore(ing) {
@@ -193,6 +219,8 @@ export default function Pantry() {
           categories={categories}
           priceOf={id => priceFor(pricesByIng, id, null)}
           mode="browse"
+          lastBought={lastBought}
+          onStockChange={changeStock}
           onToggleStock={toggleHasAny}
           onToggleKeep={toggleKeep}
           onSelect={setSelected}

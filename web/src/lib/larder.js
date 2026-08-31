@@ -362,6 +362,53 @@ export async function undoPurchase(item) {
   return data
 }
 
+/**
+ * When each ingredient was last actually bought.
+ *
+ * The honest answer to "have we still got that?" is often "we bought it in
+ * March", so this drives the staleness view: things the house believes it has
+ * but hasn't replaced in months are exactly the forgotten jar at the back.
+ *
+ * @returns {Object} ingredientId → ISO date string
+ */
+export async function loadLastBought(ingredientIds) {
+  if (!ingredientIds?.length) return {}
+  const { data } = await supabase
+    .from('shopping_list_items')
+    .select('ingredient_id, bought_at')
+    .in('ingredient_id', ingredientIds)
+    .eq('bought', true)
+    .order('bought_at', { ascending: false })
+
+  const map = {}
+  for (const row of (data ?? [])) {
+    if (!row.bought_at) continue
+    if (map[row.ingredient_id] == null) map[row.ingredient_id] = row.bought_at   // first = latest
+  }
+  return map
+}
+
+/**
+ * Set what's on the shelf by hand.
+ *
+ * Buying adds to this automatically, but nothing takes it away — the app
+ * doesn't watch you eat. Correcting it here is the intended move, so the two
+ * facts are kept consistent: a quantity above zero means the house has some,
+ * and typing zero means it doesn't. Clearing the box says "I don't know",
+ * which leaves the in-stock flag exactly as it was.
+ */
+export async function setIngredientStock(ingredientId, qty, unit) {
+  const n = qty === '' || qty == null ? null : Number(qty)
+  if (n != null && (isNaN(n) || n < 0)) throw new Error('Quantity must be zero or more')
+
+  const patch = { stock_qty: n, stock_unit: (unit ?? '').trim() || null }
+  if (n != null) patch.has_any = n > 0
+
+  const { error } = await supabase.from('ingredients').update(patch).eq('id', ingredientId)
+  if (error) throw new Error(error.message)
+  return patch
+}
+
 // ── What an odd unit weighs ──────────────────────────────────────────────────
 
 /**

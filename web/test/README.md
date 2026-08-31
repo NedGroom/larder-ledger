@@ -30,7 +30,7 @@ printf 'VITE_SUPABASE_URL=http://127.0.0.1:9999\nVITE_SUPABASE_ANON_KEY=test\n' 
 npm run dev &
 npm i --no-save playwright
 
-for t in larder-and-shop receipt-as-shop receipt-fills-shop planner dishes prices ingredient-edits; do
+for t in larder-and-shop larder-view receipt-as-shop receipt-fills-shop planner dishes prices ingredient-edits; do
   node test/$t.test.mjs
 done
 ```
@@ -45,6 +45,7 @@ isn't right for your machine.
 
 | File | Covers |
 |---|---|
+| `larder-view.test.mjs` | Browsing the larder: quantities shown and corrected in place, grouping, sorting (including longest-ago), the filters, search and the summary line |
 | `larder-and-shop.test.mjs` | Browsing the larder (categories, dimming, search, quick-create), building a list from it, buying/undoing, adding mid-shop, history |
 | `receipt-as-shop.test.mjs` | A receipt scanned in the Shops tab becoming its own completed shop, with the shop and date read off the photo |
 | `receipt-fills-shop.test.mjs` | A receipt scanned mid-shop filling the list already in progress |

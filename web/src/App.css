@@ -965,3 +965,32 @@ hr.divider { border: none; border-top: 1px solid #ebebeb; margin: 1rem 0; }
 .label-reading-grid { display: flex; flex-wrap: wrap; gap: .75rem; margin-bottom: .5rem; }
 .label-reading-cell { display: flex; flex-direction: column; font-size: .82rem; }
 .label-disagrees { color: #b45309; }
+
+/* ── Larder toolbar and in-place stock ──────────────────────────────── */
+.larder-toolbar {
+  display: flex; align-items: center; gap: .6rem; flex-wrap: wrap;
+  margin: .4rem 0 .3rem;
+}
+.larder-tool { display: inline-flex; align-items: center; gap: .3rem; margin: 0; }
+.larder-tool select { margin: 0; padding: .22rem .4rem; font-size: .8rem; }
+.larder-filter-chips { display: inline-flex; gap: .3rem; flex-wrap: wrap; }
+.chip {
+  background: var(--color-surface2); border: 1px solid var(--color-border);
+  border-radius: 12px; padding: .18rem .55rem; font-size: .76rem; cursor: pointer; color: inherit;
+}
+.chip--on { background: var(--color-accent); border-color: var(--color-accent); color: #fff; }
+.chip-count { opacity: .65; font-variant-numeric: tabular-nums; }
+.larder-summary { margin: 0 0 .5rem; font-size: .78rem; }
+
+.ing-card-stock { display: inline-flex; }
+.stock-field { display: inline-flex; align-items: center; gap: 2px; }
+.stock-field input {
+  margin: 0; padding: .16rem .3rem; font-size: .8rem; text-align: right;
+  background: var(--color-surface2); border: 1px solid transparent; border-radius: 6px;
+}
+.stock-field input:hover  { border-color: var(--color-border); }
+.stock-field input:focus  { border-color: var(--color-accent); }
+.stock-qty  { width: 56px; }
+.stock-unit { width: 38px; text-align: left; }
+.stock-saving { color: var(--color-accent); font-weight: 700; }
+.pill.amber { background: rgba(251,191,36,.18); color: #b45309; }
