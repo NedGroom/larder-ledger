@@ -21,6 +21,7 @@ CREATE TABLE users (
   target_kcal NUMERIC,
   target_protein_g NUMERIC,
   target_fibre_g NUMERIC,
+  is_assistant BOOLEAN NOT NULL DEFAULT FALSE,  -- the assistant's own member (larder-mcp)
   created_at TIMESTAMPTZ DEFAULT now()
 );
 
@@ -341,3 +342,24 @@ BEGIN
 END;
 $$;
 
+-- Food eaten that wasn't a planned meal (the assistant's log_food). Migration 20261106000001.
+CREATE TABLE food_log (
+  id          BIGSERIAL PRIMARY KEY,
+  house_id    BIGINT NOT NULL REFERENCES houses(id) ON DELETE CASCADE,
+  user_id     BIGINT REFERENCES users(id) ON DELETE SET NULL,
+  eaten_on    DATE NOT NULL,
+  slot        TEXT,
+  description TEXT NOT NULL,
+  grams       NUMERIC,
+  kcal        NUMERIC,
+  protein_g   NUMERIC,
+  carbs_g     NUMERIC,
+  fat_g       NUMERIC,
+  fibre_g     NUMERIC,
+  source      TEXT NOT NULL DEFAULT 'manual',
+  created_at  TIMESTAMPTZ DEFAULT now(),
+  CONSTRAINT food_log_slot_valid CHECK (slot IS NULL OR slot IN ('breakfast', 'lunch', 'dinner', 'snack')),
+  CONSTRAINT food_log_source_valid CHECK (source IN ('label', 'estimated', 'manual')),
+  CONSTRAINT food_log_kcal_sane CHECK (kcal IS NULL OR (kcal >= 0 AND kcal <= 3000))
+);
+CREATE INDEX idx_food_log_day ON food_log(house_id, eaten_on);

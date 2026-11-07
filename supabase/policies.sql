@@ -19,6 +19,7 @@ ALTER TABLE IF EXISTS cooks                      ENABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS cook_components            ENABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS cook_component_ingredients ENABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS allocations                ENABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS food_log                   ENABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS meal_categories            ENABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS meals               ENABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS meal_ingredients    ENABLE ROW LEVEL SECURITY;
@@ -30,6 +31,7 @@ ALTER TABLE IF EXISTS receipts            ENABLE ROW LEVEL SECURITY;
 -- GRANT RPC functions to authenticated users
 GRANT EXECUTE ON FUNCTION auto_generate_shopping_list(INTEGER) TO authenticated;
 GRANT EXECUTE ON FUNCTION meal_ingredient_fractions(INTEGER)   TO authenticated;
+GRANT EXECUTE ON FUNCTION house_people(BIGINT)                 TO authenticated;
 
 -- HELPER: returns true if the logged-in user is a member of the given house
 -- Joins house_users -> users via integer id, then checks auth_uid = auth.uid()
@@ -82,6 +84,7 @@ CREATE POLICY "categories: house members"          ON categories          FOR AL
 CREATE POLICY "periods: house members"             ON periods             FOR ALL USING (is_house_member(house_id)) WITH CHECK (is_house_member(house_id));
 CREATE POLICY "cooks: house members"               ON cooks               FOR ALL USING (is_house_member(house_id)) WITH CHECK (is_house_member(house_id));
 CREATE POLICY "cook_components: house members"     ON cook_components     FOR ALL USING (is_house_member(house_id)) WITH CHECK (is_house_member(house_id));
+CREATE POLICY "food_log: house members"            ON food_log            FOR ALL USING (is_house_member(house_id)) WITH CHECK (is_house_member(house_id));
 CREATE POLICY "allocations: house members"         ON allocations         FOR ALL USING (is_house_member(house_id)) WITH CHECK (is_house_member(house_id));
 CREATE POLICY "meals: house members"               ON meals               FOR ALL USING (is_house_member(house_id)) WITH CHECK (is_house_member(house_id));
 CREATE POLICY "stores: house members"              ON stores              FOR ALL USING (is_house_member(house_id)) WITH CHECK (is_house_member(house_id));

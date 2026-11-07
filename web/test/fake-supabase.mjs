@@ -66,14 +66,48 @@ export function stubAi(page, result) {
 }
 
 export async function installRoutes(page, db) {
-  let nextId = 700
-
+  const handle = restHandler(db)
   await page.route('**/rest/v1/**', async route => {
     const req = route.request()
-    const url = new URL(req.url())
-    const table = url.pathname.split('/rest/v1/')[1].split('?')[0]
-    const method = req.method()
+    const res = await handle({
+      method: req.method(), url: req.url(), headers: req.headers(),
+      json: () => req.postDataJSON(),
+    })
+    await route.fulfill({ status: res.status, contentType: 'application/json', headers: res.headers, body: res.body })
+  })
+}
+
+/**
+ * The fake's PostgREST, independent of any browser: `({method, url, headers, json})`
+ * in, `{status, headers, body}` out. `installRoutes` serves it to the page;
+ * `fakeFetch` serves it to a supabase-js client in Node (the assistant tests).
+ */
+export function restHandler(db) {
+  let nextId = 700
+
+  return async function handle(req) {
+    const url = new URL(req.url)
+    const method = req.method
+    const headers = Object.fromEntries(Object.entries(req.headers || {}).map(([k, v]) => [k.toLowerCase(), v]))
+    const path = url.pathname.split('/rest/v1/')[1].split('?')[0]
     const select = url.searchParams.get('select') || ''
+
+    // RPCs the assistant uses, answered from the same tables.
+    if (path.startsWith('rpc/')) {
+      const fn = path.slice(4)
+      const args = req.json() ?? {}
+      if (fn === 'house_people') {
+        const members = db.house_users.filter(h => h.house_id === Number(args.p_house_id)).map(h => h.user_id)
+        const rows = db.users.filter(u => members.includes(u.id)).map(u => ({
+          id: u.id, name: u.name, is_assistant: !!u.is_assistant, target_kcal: u.target_kcal ?? null,
+          target_protein_g: u.target_protein_g ?? null, target_fibre_g: u.target_fibre_g ?? null,
+        }))
+        return { status: 200, headers: undefined, body: JSON.stringify(rows) }
+      }
+      // Any other RPC answers empty, as the fake always has (the app calls some on load).
+      return { status: 200, headers: undefined, body: '[]' }
+    }
+    const table = path
 
     // Fill in the relations the app asks for via PostgREST's embed syntax.
     const embed = r => {
@@ -109,6 +143,12 @@ export async function installRoutes(page, db) {
         if (['select', 'order', 'limit', 'offset', 'columns', 'on_conflict'].includes(k)) continue
         if (v.startsWith('eq.')) {
           rows = rows.filter(r => String(r[k]) === v.slice(3))
+        } else if (v.startsWith('neq.')) {
+          rows = rows.filter(r => String(r[k]) !== v.slice(4))
+        } else if (v.startsWith('gte.')) {
+          rows = rows.filter(r => r[k] != null && String(r[k]) >= v.slice(4))
+        } else if (v.startsWith('lte.')) {
+          rows = rows.filter(r => r[k] != null && String(r[k]) <= v.slice(4))
         } else if (v.startsWith('in.')) {
           const set = v.slice(3).replace(/^\(|\)$/g, '').split(',').map(x => x.replace(/"/g, ''))
           rows = rows.filter(r => set.includes(String(r[k])))
@@ -130,7 +170,7 @@ export async function installRoutes(page, db) {
       matched = rows.length
       body = rows.map(embed)
     } else if (method === 'POST') {
-      const payload = req.postDataJSON()
+      const payload = req.json()
       const arr = Array.isArray(payload) ? payload : [payload]
       body = arr.map(p => {
         if (table === 'users' && p.auth_uid) {
@@ -143,7 +183,8 @@ export async function installRoutes(page, db) {
       }).map(embed)
     } else if (method === 'PATCH') {
       const rows = applyFilters(db[table] || [])
-      rows.forEach(r => Object.assign(r, req.postDataJSON()))
+      const patch = req.json()
+      rows.forEach(r => Object.assign(r, patch))
       body = rows.map(embed)
     } else if (method === 'DELETE') {
       const doomed = new Set(applyFilters(db[table] || []))
@@ -153,20 +194,36 @@ export async function installRoutes(page, db) {
       body = []
     }
 
-    const wantsSingle = (req.headers()['accept'] || '').includes('vnd.pgrst.object')
+    const wantsSingle = (headers['accept'] || '').includes('vnd.pgrst.object')
     // `select('*', { count: 'exact', head: true })` reads the total off the
     // Content-Range header and never looks at the body.
-    const wantsCount = (req.headers()['prefer'] || '').includes('count=')
-    await route.fulfill({
+    const wantsCount = (headers['prefer'] || '').includes('count=')
+    return {
       status: method === 'POST' ? 201 : 200,
-      contentType: 'application/json',
       headers: wantsCount
         ? { 'content-range': `0-${Math.max(0, matched - 1)}/${matched}`,
             'access-control-expose-headers': 'content-range' }
         : undefined,
       body: method === 'HEAD' ? '' : JSON.stringify(wantsSingle ? (body[0] ?? null) : body),
+    }
+  }
+}
+
+/** A `fetch` for supabase-js in Node that answers from the fake instead of the network. */
+export function fakeFetch(db) {
+  const handle = restHandler(db)
+  return async (input, init = {}) => {
+    const url = typeof input === 'string' ? input : input.url
+    const headers = init.headers instanceof Headers ? Object.fromEntries(init.headers.entries()) : (init.headers || {})
+    const raw = init.body
+    const res = await handle({
+      method: (init.method || 'GET').toUpperCase(), url, headers,
+      json: () => (raw ? JSON.parse(typeof raw === 'string' ? raw : new TextDecoder().decode(raw)) : null),
     })
-  })
+    return new Response(res.body === '' ? null : res.body, {
+      status: res.status, headers: { 'content-type': 'application/json', ...(res.headers || {}) },
+    })
+  }
 }
 
 // ── Tiny assertion collector ─────────────────────────────────────────────────

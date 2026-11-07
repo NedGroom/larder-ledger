@@ -12,6 +12,9 @@ A household pantry, meal planning, and price comparison app built with React + S
 - **Stores** — record per-store prices for ingredients with package size and per-unit cost
 - **Shopping list** — auto-generate from missing pantry items; tag items to a meal; check off as you shop
 - **Receipts** — upload a receipt photo or paste text; AI extracts prices for you to confirm
+- **Assistant** — the larder as tools for Claude (`supabase/functions/larder-mcp`, an MCP server):
+  ask by voice or chat what's in stock, what to cook, quota and calories; record purchases and food.
+  See [docs/assistant.md](docs/assistant.md).
 
 ## Stack
 

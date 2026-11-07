@@ -86,3 +86,20 @@ COMMENT ON FUNCTION meal_ingredient_fractions(INTEGER) IS
   'Returns per-meal ingredient availability fraction based on has_any. '
   'fraction=1.0 means all required ingredients are present.';
 
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- house_people: names and daily targets of a house's members, for members only.
+-- RLS on users shows each user only their own row; the assistant needs to know
+-- whose day it is counting. (Also created by migration 20261106000001.)
+-- ─────────────────────────────────────────────────────────────────────────────
+CREATE OR REPLACE FUNCTION house_people(p_house_id BIGINT)
+RETURNS TABLE (id BIGINT, name TEXT, is_assistant BOOLEAN,
+               target_kcal NUMERIC, target_protein_g NUMERIC, target_fibre_g NUMERIC)
+LANGUAGE sql STABLE SECURITY DEFINER AS $$
+  SELECT u.id, u.name, u.is_assistant, u.target_kcal, u.target_protein_g, u.target_fibre_g
+    FROM house_users hu JOIN users u ON u.id = hu.user_id
+   WHERE hu.house_id = p_house_id
+     AND EXISTS (SELECT 1 FROM house_users me JOIN users mu ON mu.id = me.user_id
+                  WHERE me.house_id = p_house_id AND mu.auth_uid = auth.uid())
+   ORDER BY u.is_assistant, u.id;
+$$;
